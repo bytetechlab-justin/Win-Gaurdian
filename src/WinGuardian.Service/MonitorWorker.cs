@@ -2,6 +2,7 @@
 using WinGuardian.Core.Configuration;
 using WinGuardian.Core.Data;
 using WinGuardian.Core.Monitoring;
+using WinGuardian.Core.Tasks;
 
 namespace WinGuardian.Service;
 
@@ -20,6 +21,7 @@ public sealed class MonitorWorker(
     ProcessMonitor processMonitor,
     ServiceMonitor serviceMonitor,
     PersistenceMonitor persistenceMonitor,
+    ScheduledTaskMonitor taskMonitor,
     ProcessStartWatcher processStartWatcher,
     SelfProtection selfProtection,
     FileWatcherService watcher,
@@ -45,6 +47,13 @@ public sealed class MonitorWorker(
                     var count = persistenceMonitor.CaptureBaseline();
                     events.Info("Persistence baseline captured", $"{count} autostart entries recorded.");
                 }
+                if (!taskMonitor.HasBaseline)
+                {
+                    // Upgrade from a version without scheduled-task analysis.
+                    var tasks = await Task.Run(taskMonitor.CaptureBaseline, ct);
+                    events.Info("Scheduled task baseline captured", $"{tasks} tasks recorded with their actions, COM handlers and signatures.");
+                }
+                taskMonitor.Start();
                 watcher.Start();
                 state.Phase = "Monitoring";
                 logger.LogInformation("Baseline found; monitoring started");
@@ -77,6 +86,7 @@ public sealed class MonitorWorker(
                 if (now >= nextPersistencePoll)
                 {
                     RunSafely("persistence poll", persistenceMonitor.Poll);
+                    RunSafely("scheduled task check", taskMonitor.Poll);
                     nextPersistencePoll = now.AddSeconds(options.PersistencePollSeconds);
                 }
                 if (now >= nextHeartbeat)
@@ -108,6 +118,7 @@ public sealed class MonitorWorker(
         finally
         {
             watcher.Stop();
+            taskMonitor.Stop();
             processStartWatcher.Dispose();
         }
     }
@@ -136,6 +147,7 @@ public sealed class MonitorWorker(
                 break;
             case GuardianCommand.RebuildBaseline:
                 watcher.Stop();
+                taskMonitor.Stop();
                 db.ClearBaseline();
                 processMonitor.Reset();
                 events.Info("Baseline rebuild started", "Requested by an administrator.");
@@ -150,8 +162,10 @@ public sealed class MonitorWorker(
         var processes = processMonitor.CaptureBaseline();
         var services = serviceMonitor.CaptureBaseline();
         var persistence = persistenceMonitor.CaptureBaseline();
-        events.Info("Process, service and persistence baseline captured",
-            $"{processes} executables running, {services} services/drivers registered, {persistence} autostart entries.");
+        var tasks = taskMonitor.CaptureBaseline();
+        taskMonitor.Start();
+        events.Info("Process, service, persistence and scheduled task baseline captured",
+            $"{processes} executables running, {services} services/drivers registered, {persistence} autostart entries, {tasks} scheduled tasks.");
         StartScan(isBaseline: true, ct);
     }
 

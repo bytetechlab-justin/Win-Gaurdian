@@ -1,4 +1,4 @@
-namespace WinGuardian.Core;
+﻿namespace WinGuardian.Core;
 
 /// <summary>Snapshot of the service's state, sent to the tray app over the pipe.</summary>
 public sealed class GuardianStatus
@@ -22,4 +22,6 @@ public sealed class GuardianStatus
     public bool MalwareBazaarConfigured { get; set; }
     public bool VirusTotalConfigured { get; set; }
     public int QuarantineCount { get; set; }
+    public long BaselineTaskCount { get; set; }
+    public bool TaskAuditingActive { get; set; }
 }

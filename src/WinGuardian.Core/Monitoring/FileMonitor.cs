@@ -83,8 +83,9 @@ public sealed class FileMonitor(
                 while (r.Read())
                 {
                     var path = r.GetString(0);
-                    // Only treat it as removed if it lies under a current scan root (config may have changed).
-                    if (!isBaseline && roots.Any(root => path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)))
+                    // Only treat it as removed if it is still in scope (scan roots/exclusions may have changed).
+                    if (!isBaseline && !filter.IsExcluded(path) &&
+                        roots.Any(root => path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)))
                     {
                         events.Record(c, tx, FileEvent(path, ChangeKind.Removed, null));
                         changes++;

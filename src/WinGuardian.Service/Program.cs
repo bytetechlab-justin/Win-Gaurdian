@@ -6,6 +6,7 @@ using WinGuardian.Core.Configuration;
 using WinGuardian.Core.Data;
 using WinGuardian.Core.Monitoring;
 using WinGuardian.Core.Reputation;
+using WinGuardian.Core.Tasks;
 using WinGuardian.Service;
 
 // Pin the content root to the exe folder so appsettings.json is found both as a service and from a console.
@@ -41,6 +42,9 @@ builder.Services.AddSingleton<ProcessStartWatcher>();
 builder.Services.AddSingleton<ServiceMonitor>();
 builder.Services.AddSingleton<PersistenceMonitor>();
 builder.Services.AddSingleton<SelfProtection>();
+builder.Services.AddSingleton<ProcessHistory>();
+builder.Services.AddSingleton<ITaskAttributor, TaskAttributor>();
+builder.Services.AddSingleton<ScheduledTaskMonitor>();
 builder.Services.AddSingleton<FileWatcherService>();
 
 builder.Services.AddHostedService<MonitorWorker>();

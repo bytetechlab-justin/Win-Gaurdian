@@ -19,6 +19,8 @@ public sealed class GuardianDatabase
     public const string MetaCleanStop = "clean_stop_utc";
     public const string MetaSelfManifest = "self_manifest";
     public const string MetaRuntimeSettings = "runtime_settings";
+    public const string MetaTasksBaseline = "tasks_baseline_utc";
+    public const string MetaAuditingEnabledByUs = "task_auditing_enabled_by_winguardian";
 
     private readonly string _connectionString;
 
@@ -113,6 +115,11 @@ public sealed class GuardianDatabase
                 xor_key         BLOB NOT NULL,
                 pending_reboot  INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                path        TEXT PRIMARY KEY COLLATE NOCASE,
+                state_json  TEXT NOT NULL,
+                updated_utc TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reputation (
                 sha256      TEXT NOT NULL COLLATE NOCASE,
                 provider    TEXT NOT NULL,
@@ -131,6 +138,10 @@ public sealed class GuardianDatabase
         EnsureColumn(c, "events", "trust_key", "TEXT");
         EnsureColumn(c, "events", "signature", "TEXT");
         EnsureColumn(c, "events", "signer", "TEXT");
+        EnsureColumn(c, "events", "analysis", "TEXT");
+
+        // Scheduled tasks moved from the generic persistence monitor to ScheduledTaskMonitor.
+        Execute(c, null, "DELETE FROM persistence WHERE location = 'Scheduled Task'");
     }
 
     private static void EnsureColumn(SqliteConnection c, string table, string column, string type)
@@ -178,10 +189,10 @@ public sealed class GuardianDatabase
         using var tx = c.BeginTransaction();
         Execute(c, tx, """
             DELETE FROM files; DELETE FROM processes; DELETE FROM services;
-            DELETE FROM persistence; DELETE FROM persistence_scopes;
+            DELETE FROM persistence; DELETE FROM persistence_scopes; DELETE FROM scheduled_tasks;
             """);
-        Execute(c, tx, "DELETE FROM meta WHERE key IN ($a, $b, $c)",
-            ("$a", MetaBaselineCreated), ("$b", MetaLastFullScan), ("$c", MetaPersistenceBaseline));
+        Execute(c, tx, "DELETE FROM meta WHERE key IN ($a, $b, $c, $d)",
+            ("$a", MetaBaselineCreated), ("$b", MetaLastFullScan), ("$c", MetaPersistenceBaseline), ("$d", MetaTasksBaseline));
         tx.Commit();
     }
 
@@ -326,13 +337,13 @@ public sealed class GuardianDatabase
     public long InsertEvent(SqliteConnection c, SqliteTransaction? tx, GuardianEvent e)
     {
         Execute(c, tx, """
-            INSERT INTO events(time_utc, severity, category, change, subject, details, acknowledged, file_path, sha256, trust_key, signature, signer)
-            VALUES($t, $s, $c, $ch, $sub, $d, $a, $fp, $h, $tk, $sig, $sgn)
+            INSERT INTO events(time_utc, severity, category, change, subject, details, acknowledged, file_path, sha256, trust_key, signature, signer, analysis)
+            VALUES($t, $s, $c, $ch, $sub, $d, $a, $fp, $h, $tk, $sig, $sgn, $an)
             """,
             ("$t", Iso(e.TimeUtc)), ("$s", (int)e.Severity),
             ("$c", e.Category.ToString()), ("$ch", e.Change.ToString()), ("$sub", e.Subject),
             ("$d", e.Details), ("$a", e.Acknowledged ? 1 : 0),
-            ("$fp", e.FilePath), ("$h", e.Sha256), ("$tk", e.TrustKey), ("$sig", e.Signature), ("$sgn", e.Signer));
+            ("$fp", e.FilePath), ("$h", e.Sha256), ("$tk", e.TrustKey), ("$sig", e.Signature), ("$sgn", e.Signer), ("$an", e.Analysis));
         e.Id = (long)Scalar(c, tx, "SELECT last_insert_rowid()")!;
         return e.Id;
     }
@@ -341,10 +352,11 @@ public sealed class GuardianDatabase
     /// With <paramref name="sinceId"/>: events newer than that id, oldest first.
     /// Without: the most recent <paramref name="limit"/> events, newest first.
     /// </summary>
-    public List<GuardianEvent> GetEvents(long? sinceId, int limit, bool unacknowledgedOnly)
+    public List<GuardianEvent> GetEvents(long? sinceId, int limit, bool unacknowledgedOnly, string? extraFilter = null)
     {
         using var c = Open();
         var where = new List<string>();
+        if (extraFilter is not null) where.Add(extraFilter);
         if (sinceId is not null) where.Add("id > $since");
         if (unacknowledgedOnly) where.Add("acknowledged = 0");
         var sql = "SELECT id, time_utc, severity, category, change, subject, details, acknowledged, file_path, sha256, trust_key, signature, signer FROM events"
@@ -374,6 +386,52 @@ public sealed class GuardianDatabase
             });
         }
         return list;
+    }
+
+    /// <summary>One event including its analysis JSON (which list queries leave out to stay small).</summary>
+    public GuardianEvent? GetEvent(long id)
+    {
+        using var c = Open();
+        var e = GetEvents(null, int.MaxValue, false, $"id = {id}").FirstOrDefault();
+        if (e is not null) e.Analysis = Scalar(c, null, "SELECT analysis FROM events WHERE id = $id", ("$id", id)) as string;
+        return e;
+    }
+
+    // ----------------------------------------------------- scheduled tasks
+
+    public Dictionary<string, string> GetTaskStatesJson()
+    {
+        using var c = Open();
+        using var cmd = Command(c, null, "SELECT path, state_json FROM scheduled_tasks");
+        using var r = cmd.ExecuteReader();
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (r.Read()) result[r.GetString(0)] = r.GetString(1);
+        return result;
+    }
+
+    public string? GetTaskStateJson(string path)
+    {
+        using var c = Open();
+        return Scalar(c, null, "SELECT state_json FROM scheduled_tasks WHERE path = $p", ("$p", path)) as string;
+    }
+
+    public void UpsertTaskState(string path, string json)
+    {
+        using var c = Open();
+        Execute(c, null, "INSERT OR REPLACE INTO scheduled_tasks(path, state_json, updated_utc) VALUES($p, $j, $t)",
+            ("$p", path), ("$j", json), ("$t", Iso(DateTime.UtcNow)));
+    }
+
+    public void DeleteTaskState(string path)
+    {
+        using var c = Open();
+        Execute(c, null, "DELETE FROM scheduled_tasks WHERE path = $p", ("$p", path));
+    }
+
+    public long CountTaskStates()
+    {
+        using var c = Open();
+        return (long)Scalar(c, null, "SELECT COUNT(*) FROM scheduled_tasks")!;
     }
 
     /// <summary>Acknowledges the given events, or all of them when <paramref name="ids"/> is null or empty.</summary>

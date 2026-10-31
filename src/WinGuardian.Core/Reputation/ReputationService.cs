@@ -62,7 +62,7 @@ public sealed class ReputationService
             case EventCategory.File when e.FilePath is not null && SeverityRules.IsExecutable(e.FilePath):
                 Enqueue(new ReputationRequest(e.Sha256, e.FilePath, UseVirusTotal: false, Manual: false));
                 break;
-            case EventCategory.Process or EventCategory.Service or EventCategory.Persistence:
+            case EventCategory.Process or EventCategory.Service or EventCategory.Persistence or EventCategory.ScheduledTask:
                 Enqueue(new ReputationRequest(e.Sha256, e.FilePath, UseVirusTotal: true, Manual: false));
                 break;
         }

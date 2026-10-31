@@ -4,4 +4,7 @@
     <Project Path="src/WinGuardian.Service/WinGuardian.Service.csproj" />
     <Project Path="src/WinGuardian.Tray/WinGuardian.Tray.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WinGuardian.Tests/WinGuardian.Tests.csproj" />
+  </Folder>
 </Solution>

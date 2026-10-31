@@ -124,6 +124,19 @@ public static class PathResolver
             {
                 if (File.Exists(attempt)) return Path.GetFullPath(attempt);
             }
+
+            // Bare program names (e.g. "powershell.exe") are found through the machine PATH, like Windows does.
+            if (!Path.IsPathRooted(candidate) && candidate.IndexOfAny(['\\', '/']) < 0)
+            {
+                foreach (var dir in MachinePath.Value)
+                {
+                    foreach (var name in new[] { candidate, candidate + ".exe" })
+                    {
+                        var full = Path.Combine(dir, name);
+                        if (File.Exists(full)) return Path.GetFullPath(full);
+                    }
+                }
+            }
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
@@ -152,6 +165,14 @@ public static class PathResolver
         }
         if (current.Length > 0) yield return current.ToString();
     }
+
+    /// <summary>The system-wide PATH (not the current user's), which is what services and SYSTEM tasks see.</summary>
+    private static readonly Lazy<string[]> MachinePath = new(() =>
+        (Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) ?? "")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(Environment.ExpandEnvironmentVariables)
+            .Where(d => Path.IsPathRooted(d) && Directory.Exists(d))
+            .ToArray());
 
     private static readonly Lazy<List<(string Device, string Drive)>> DeviceMap = new(() =>
     {

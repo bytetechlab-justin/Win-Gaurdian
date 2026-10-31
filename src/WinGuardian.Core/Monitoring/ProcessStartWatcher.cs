@@ -11,7 +11,7 @@ namespace WinGuardian.Core.Monitoring;
 /// Unlike polling, this sees processes that start and exit within milliseconds, and it provides
 /// the parent process and full command line. Requires administrator/SYSTEM rights.
 /// </summary>
-public sealed class ProcessStartWatcher(ProcessMonitor monitor, ILogger<ProcessStartWatcher> logger) : IDisposable
+public sealed class ProcessStartWatcher(ProcessMonitor monitor, ProcessHistory history, ILogger<ProcessStartWatcher> logger) : IDisposable
 {
     private const string SessionName = "WinGuardian-ProcessTrace";
 
@@ -77,6 +77,9 @@ public sealed class ProcessStartWatcher(ProcessMonitor monitor, ILogger<ProcessS
                         ?? PathResolver.FirstTokenPath(data.CommandLine); // process already gone and file deleted
         var name = Path.GetFileNameWithoutExtension(imagePath ?? data.ImageFileName);
         var parentPath = NativeMethods.TryGetProcessImagePath(data.ParentID);
+
+        var commandLine = string.IsNullOrWhiteSpace(data.CommandLine) ? null : data.CommandLine.Trim();
+        history.Add(new ProcessStartRecord(data.ProcessID, data.ParentID, imagePath, commandLine, data.TimeStamp.ToUniversalTime()));
 
         _queue.Writer.TryWrite(new ProcessStart(
             new ProcessSnapshot(data.ProcessID, name, imagePath),

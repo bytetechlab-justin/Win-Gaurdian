@@ -24,6 +24,17 @@ public sealed class GuardianOptions
     public int ServicePollSeconds { get; set; } = 30;
     public int PersistencePollSeconds { get; set; } = 30;
     public int FullScanIntervalHours { get; set; } = 24;
+
+    /// <summary>Where Task Scheduler stores task definitions (watched by the scheduled-task analyzer).</summary>
+    public string ScheduledTasksRoot { get; set; } = @"%WINDIR%\System32\Tasks";
+
+    /// <summary>Overrides for scheduled-task risk indicator weights (see TaskRiskScorer.DefaultWeights).</summary>
+    public Dictionary<string, int> TaskRiskWeights { get; set; } = [];
+
+    /// <summary>Risk multiplier (percent) for tasks running as SYSTEM or with highest privileges.</summary>
+    public int TaskRiskPrivilegedMultiplierPercent { get; set; } = 150;
+    public int TaskRiskMediumThreshold { get; set; } = 3;
+    public int TaskRiskHighThreshold { get; set; } = 6;
     public int FileChangeDebounceMs { get; set; } = 2000;
 
     /// <summary>
@@ -58,6 +69,8 @@ public sealed class GuardianOptions
                 @"%WINDIR%\CbsTemp",
                 @"%WINDIR%\tracing",
                 @"%WINDIR%\appcompat",
+                // Analysed by ScheduledTaskMonitor instead of generic file monitoring.
+                @"%WINDIR%\System32\Tasks",
             ]);
         }
     }

@@ -1,4 +1,4 @@
-using System.IO.Pipes;
+﻿using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
@@ -24,6 +24,7 @@ public static class PipeProtocol
         public const string Lookup = "lookup";
         public const string Trusted = "trusted";
         public const string Quarantined = "quarantined";
+        public const string Event = "event";
 
         public const string Acknowledge = "acknowledge";
         public const string Rebuild = "rebuild";

@@ -1,4 +1,4 @@
-using WinGuardian.Core;
+﻿using WinGuardian.Core;
 using WinGuardian.Core.Ipc;
 
 namespace WinGuardian.Tray;
@@ -12,6 +12,11 @@ internal sealed class SettingsForm : Form
     private readonly NumericUpDown _retentionDays = new() { Minimum = 1, Maximum = 3650, Width = 100 };
     private readonly CheckBox _autoQuarantine = new() { Text = "Automatically quarantine files confirmed as known malware", AutoSize = true };
     private readonly CheckBox _showKeys = new() { Text = "Show keys", AutoSize = true };
+    private readonly CheckBox _taskAuditing = new()
+    {
+        Text = "Record which process creates or changes scheduled tasks\n(turns on Windows \"Other Object Access Events\" auditing)",
+        AutoSize = true,
+    };
 
     public SettingsForm()
     {
@@ -34,10 +39,11 @@ internal sealed class SettingsForm : Form
         Row("MalwareBazaar API key:", _malwareBazaarKey);
         Row("", new LinkLabel { Text = "Get a free key at auth.abuse.ch", AutoSize = true, Tag = "https://auth.abuse.ch/" });
         Row("VirusTotal API key:", _virusTotalKey);
-        Row("", new LinkLabel { Text = "Get a free key at virustotal.com (account → API key)", AutoSize = true, Tag = "https://www.virustotal.com/gui/my-apikey" });
+        Row("", new LinkLabel { Text = "Get a free key at virustotal.com (account â†’ API key)", AutoSize = true, Tag = "https://www.virustotal.com/gui/my-apikey" });
         Row("VirusTotal lookups per day:", _virusTotalLimit);
         Row("Keep acknowledged events (days):", _retentionDays);
         Row("", _autoQuarantine);
+        Row("", _taskAuditing);
         Row("", _showKeys);
 
         foreach (var link in layout.Controls.OfType<LinkLabel>())
@@ -76,6 +82,7 @@ internal sealed class SettingsForm : Form
             _virusTotalLimit.Value = Math.Clamp(s.VirusTotalDailyLimit, 0, 1_000_000);
             _retentionDays.Value = Math.Clamp(s.EventRetentionDays, 1, 3650);
             _autoQuarantine.Checked = s.AutoQuarantineMalicious;
+            _taskAuditing.Checked = s.TaskAuditingEnabled;
         }
         catch (Exception ex)
         {
@@ -93,6 +100,7 @@ internal sealed class SettingsForm : Form
             VirusTotalDailyLimit = (int)_virusTotalLimit.Value,
             EventRetentionDays = (int)_retentionDays.Value,
             AutoQuarantineMalicious = _autoQuarantine.Checked,
+            TaskAuditingEnabled = _taskAuditing.Checked,
         };
         if (await ServiceCommands.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.SetSettings, Settings = settings }, this, showSuccess: false))
         {

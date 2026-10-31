@@ -12,6 +12,17 @@ internal static class Program
         // Modes used when the tray relaunches itself elevated (UAC) for an admin-only action.
         if (args.Length == 2 && args[0] == "--request")
             return RunElevatedRequest(args[1]);
+        if (args.Length == 2 && args[0] == "--event" && long.TryParse(args[1], out var eventId))
+        {
+            using var host = new Form { ShowInTaskbar = false, Opacity = 0 };
+            host.Shown += async (_, _) =>
+            {
+                await EventDetailsForm.ShowAsync(host, eventId);
+                host.Close();
+            };
+            Application.Run(host);
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--settings")
         {
             using var form = new SettingsForm();

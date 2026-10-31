@@ -23,7 +23,7 @@ internal sealed class DashboardForm : Form
         Icon = IconFactory.CreateShield(Color.FromArgb(46, 160, 67));
         Font = new Font("Segoe UI", 9f);
 
-        _statusLabel = new Label { Dock = DockStyle.Top, Height = 105, Padding = new Padding(10), Text = "Connecting..." };
+        _statusLabel = new Label { Dock = DockStyle.Top, Height = 122, Padding = new Padding(10), Text = "Connecting..." };
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(6, 4, 6, 4) };
         toolbar.Controls.Add(MakeButton("Refresh", RefreshAllAsync));
@@ -89,6 +89,7 @@ internal sealed class DashboardForm : Form
             $"Service v{s.ServiceVersion}: {s.Phase}{progress}\n" +
             $"Baseline created: {When(s.BaselineCreatedUtc)}    Last full scan: {When(s.LastFullScanUtc)}\n" +
             $"Baseline: {s.BaselineFileCount:N0} files, {s.BaselineProcessCount:N0} executables, {s.BaselineServiceCount:N0} services/drivers, {s.BaselinePersistenceCount:N0} autostart entries\n" +
+            $"Scheduled tasks analysed: {s.BaselineTaskCount:N0}    Task change attribution (auditing): {OnOff(s.TaskAuditingActive)}\n" +
             $"Real-time process tracing (ETW): {OnOff(s.EtwProcessTracing)}    MalwareBazaar: {OnOff(s.MalwareBazaarConfigured)}    VirusTotal: {OnOff(s.VirusTotalConfigured)}    Quarantined files: {s.QuarantineCount}\n" +
             $"Unacknowledged alerts: {s.UnacknowledgedCount:N0}" +
             (s.LastError is null ? "" : $"    Last error: {s.LastError}");
@@ -300,7 +301,7 @@ internal sealed class DashboardForm : Form
     private void ShowSelectedDetails()
     {
         if (SelectedEvents().FirstOrDefault() is not { } e) return;
-        MessageBox.Show(this, Describe(e), "Event #" + e.Id, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _ = EventDetailsForm.ShowAsync(this, e.Id);
     }
 
     private static string Describe(GuardianEvent e) =>

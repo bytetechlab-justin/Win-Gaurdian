@@ -1,4 +1,4 @@
-﻿using WinGuardian.Core;
+using WinGuardian.Core;
 using WinGuardian.Core.Ipc;
 
 namespace WinGuardian.Tray;
@@ -9,7 +9,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private const Severity NotifyThreshold = Severity.Medium;
 
     private readonly Icon _iconOk = IconFactory.CreateShield(Color.FromArgb(46, 160, 67));
-    private readonly Icon _iconBusy = IconFactory.CreateShield(Color.FromArgb(31, 111, 235), "â€¦");
+    private readonly Icon _iconBusy = IconFactory.CreateShield(Color.FromArgb(31, 111, 235), "…");
     private readonly Icon _iconWarn = IconFactory.CreateShield(Color.FromArgb(210, 153, 34), "!");
     private readonly Icon _iconAlert = IconFactory.CreateShield(Color.FromArgb(207, 34, 46), "!");
     private readonly Icon _iconOffline = IconFactory.CreateShield(Color.Gray, "?");
@@ -177,7 +177,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     // NotifyIcon.Text is limited to 127 characters.
     private void SetTooltip(string text) => _notifyIcon.Text = Truncate(text, 127);
 
-    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "â€¦";
+    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
 
     protected override void ExitThreadCore()
     {

@@ -1,6 +1,5 @@
-﻿using System.Management;
+using System.Management;
 using System.Security.Principal;
-using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using WinGuardian.Core.Configuration;
@@ -10,7 +9,7 @@ namespace WinGuardian.Core.Monitoring;
 
 /// <summary>
 /// Watches the places malware uses to survive a reboot: Run/RunOnce keys (machine and every loaded
-/// user hive), startup folders, scheduled tasks, WMI event subscriptions, Winlogon/AppInit/LSA/
+/// user hive), startup folders, WMI event subscriptions, Winlogon/AppInit/LSA/
 /// Session Manager values, Image File Execution Options debuggers and SilentProcessExit monitors,
 /// and Active Setup. (Services and drivers are covered by <see cref="ServiceMonitor"/>.)
 /// </summary>
@@ -40,7 +39,6 @@ public sealed class PersistenceMonitor(
     private const string Lsa = @"SYSTEM\CurrentControlSet\Control\Lsa";
 
     private readonly long _maxHashBytes = options.MaxHashFileSizeMB * 1024L * 1024L;
-    private readonly Dictionary<string, (DateTime Modified, string Value)> _taskCache = new(StringComparer.OrdinalIgnoreCase);
 
     public sealed record CaptureResult(List<PersistenceEntry> Entries, HashSet<string> Scopes);
 
@@ -74,7 +72,6 @@ public sealed class PersistenceMonitor(
         }
 
         AddStartupFolders(entries);
-        AddScheduledTasks(entries);
         AddWmiSubscriptions(entries);
         return new CaptureResult(entries, scopes);
     }
@@ -125,9 +122,7 @@ public sealed class PersistenceMonitor(
 
     private GuardianEvent PersistenceEvent(PersistenceEntry entry, ChangeKind change, string details)
     {
-        var routineMicrosoftTask = entry.Location == "Scheduled Task" && entry.Name.StartsWith(@"\Microsoft\", StringComparison.OrdinalIgnoreCase);
         var severity = change == ChangeKind.Removed ? Severity.Low
-            : routineMicrosoftTask ? Severity.Low
             : entry.Location.StartsWith("HKLM\\" + ActiveSetup, StringComparison.OrdinalIgnoreCase) ? Severity.Medium
             : Severity.High;
 
@@ -274,59 +269,6 @@ public sealed class PersistenceMonitor(
         }
     }
 
-    // ----------------------------------------------------- scheduled tasks
-
-    private void AddScheduledTasks(List<PersistenceEntry> entries)
-    {
-        var root = Path.Combine(GuardianPaths.Normalize("%WINDIR%"), @"System32\Tasks");
-        if (!Directory.Exists(root)) return;
-
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var options = new System.IO.EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 };
-        foreach (var file in new DirectoryInfo(root).EnumerateFiles("*", options))
-        {
-            seen.Add(file.FullName);
-            string value;
-            if (_taskCache.TryGetValue(file.FullName, out var cached) && cached.Modified == file.LastWriteTimeUtc)
-                value = cached.Value;
-            else
-            {
-                value = ParseTaskActions(file.FullName);
-                _taskCache[file.FullName] = (file.LastWriteTimeUtc, value);
-            }
-
-            var taskName = file.FullName[root.Length..];
-            entries.Add(new PersistenceEntry(MachineScope, "Scheduled Task", taskName, value,
-                PathResolver.ExtractExecutablePath(value.Split(" ; ")[0])));
-        }
-        foreach (var stale in _taskCache.Keys.Where(k => !seen.Contains(k)).ToList())
-            _taskCache.Remove(stale);
-    }
-
-    private static string ParseTaskActions(string path)
-    {
-        try
-        {
-            var doc = XDocument.Load(path);
-            var actions = new List<string>();
-            foreach (var el in doc.Descendants().Where(e => e.Name.LocalName is "Exec" or "ComHandler"))
-            {
-                string? Child(string name) => el.Elements().FirstOrDefault(e => e.Name.LocalName == name)?.Value;
-                actions.Add(el.Name.LocalName == "Exec"
-                    ? $"{Quote(Child("Command"))} {Child("Arguments")}".Trim()
-                    : $"COM {Child("ClassId")} {Child("Data")}".Trim());
-            }
-            return Truncate(actions.Count == 0 ? "(no actions)" : string.Join(" ; ", actions));
-        }
-        catch (Exception ex)
-        {
-            return $"(unreadable: {ex.GetType().Name})";
-        }
-    }
-
-    private static string Quote(string? command) =>
-        command is null ? "" : command.Contains(' ') && !command.StartsWith('"') ? $"\"{command}\"" : command;
-
     // --------------------------------------------------- WMI subscriptions
 
     private void AddWmiSubscriptions(List<PersistenceEntry> entries)
@@ -386,5 +328,5 @@ public sealed class PersistenceMonitor(
         }
     }
 
-    private static string Truncate(string s) => s.Length <= MaxValueLength ? s : s[..MaxValueLength] + "â€¦";
+    private static string Truncate(string s) => s.Length <= MaxValueLength ? s : s[..MaxValueLength] + "…";
 }

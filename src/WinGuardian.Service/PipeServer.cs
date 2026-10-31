@@ -1,4 +1,4 @@
-using System.IO.Pipes;
+﻿using System.IO.Pipes;
 using System.Reflection;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -8,6 +8,7 @@ using WinGuardian.Core.Data;
 using WinGuardian.Core.Ipc;
 using WinGuardian.Core.Monitoring;
 using WinGuardian.Core.Reputation;
+using WinGuardian.Core.Tasks;
 
 namespace WinGuardian.Service;
 
@@ -172,6 +173,12 @@ public sealed class PipeServer(
             case PipeProtocol.Commands.Status:
                 return new PipeResponse { Ok = true, Status = BuildStatus() };
 
+            case PipeProtocol.Commands.Event:
+            {
+                if (!long.TryParse(request.Id, out var id)) return PipeResponse.Fail("No event id given.");
+                return db.GetEvent(id) is { } e ? new PipeResponse { Ok = true, Events = [e] } : PipeResponse.Fail("No such event.");
+            }
+
             case PipeProtocol.Commands.Events:
                 return new PipeResponse
                 {
@@ -242,7 +249,11 @@ public sealed class PipeServer(
                 return PipeResponse.Success("Quarantined file permanently deleted.");
 
             case PipeProtocol.Commands.GetSettings:
-                return new PipeResponse { Ok = true, Settings = db.GetRuntimeSettings() };
+            {
+                var current = db.GetRuntimeSettings();
+                current.TaskAuditingEnabled = TaskAuditing.IsEnabled() == true; // report the real policy state
+                return new PipeResponse { Ok = true, Settings = current };
+            }
 
             case PipeProtocol.Commands.SetSettings:
             {
@@ -251,10 +262,19 @@ public sealed class PipeServer(
                 s.VirusTotalDailyLimit = Math.Clamp(s.VirusTotalDailyLimit, 0, 1_000_000);
                 s.MalwareBazaarApiKey = string.IsNullOrWhiteSpace(s.MalwareBazaarApiKey) ? null : s.MalwareBazaarApiKey.Trim();
                 s.VirusTotalApiKey = string.IsNullOrWhiteSpace(s.VirusTotalApiKey) ? null : s.VirusTotalApiKey.Trim();
+                var auditingNote = "";
+                if (s.TaskAuditingEnabled != (TaskAuditing.IsEnabled() == true))
+                {
+                    if (!TaskAuditing.SetEnabled(s.TaskAuditingEnabled))
+                        return PipeResponse.Fail("Could not change the Windows audit policy (it may be controlled by Group Policy).");
+                    auditingNote = s.TaskAuditingEnabled
+                        ? " Scheduled-task auditing turned on (Windows 'Other Object Access Events')."
+                        : " Scheduled-task auditing turned off.";
+                }
                 db.SetRuntimeSettings(s);
                 events.Info("Settings changed",
                     $"MalwareBazaar {(s.MalwareBazaarApiKey is null ? "off" : "on")}, VirusTotal {(s.VirusTotalApiKey is null ? "off" : "on")}, " +
-                    $"auto-quarantine {(s.AutoQuarantineMalicious ? "on" : "off")}, event retention {s.EventRetentionDays} days.");
+                    $"auto-quarantine {(s.AutoQuarantineMalicious ? "on" : "off")}, event retention {s.EventRetentionDays} days." + auditingNote);
                 return PipeResponse.Success("Settings saved.");
             }
 
@@ -308,6 +328,8 @@ public sealed class PipeServer(
             MalwareBazaarConfigured = settings.MalwareBazaarApiKey is not null,
             VirusTotalConfigured = settings.VirusTotalApiKey is not null,
             QuarantineCount = db.GetQuarantine().Count,
+            BaselineTaskCount = db.CountTaskStates(),
+            TaskAuditingActive = TaskAuditing.IsEnabled() == true,
         };
     }
 }

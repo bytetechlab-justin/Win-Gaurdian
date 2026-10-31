@@ -17,6 +17,7 @@ public enum EventCategory
     Persistence,
     Malware,
     Tamper,
+    ScheduledTask,
 }
 
 public enum ChangeKind
@@ -53,6 +54,9 @@ public sealed class GuardianEvent
 
     /// <summary>The publisher, only when the signature is valid (used for publisher trust).</summary>
     public string? Signer { get; set; }
+
+    /// <summary>Structured analysis (JSON), e.g. a scheduled-task investigation. Only returned for single-event requests.</summary>
+    public string? Analysis { get; set; }
 }
 
 public sealed record FileRecord(string Path, long Size, long LastWriteTicksUtc, string? Sha256);
@@ -159,4 +163,10 @@ public sealed class RuntimeSettings
     public int VirusTotalDailyLimit { get; set; } = 450;
     public bool AutoQuarantineMalicious { get; set; }
     public int EventRetentionDays { get; set; } = 90;
+
+    /// <summary>
+    /// Turn on Windows "Other Object Access" success auditing so scheduled-task changes can be attributed
+    /// to the process that made them. Applied by the service; the actual policy state is reported back.
+    /// </summary>
+    public bool TaskAuditingEnabled { get; set; }
 }
