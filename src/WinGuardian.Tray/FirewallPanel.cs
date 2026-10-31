@@ -184,7 +184,10 @@ internal sealed class FirewallPanel : UserControl
         var openLocation = new ToolStripMenuItem("Open File Location");
         var lookup = new ToolStripMenuItem("Look Up Program Hash Online");
         var block = new ToolStripMenuItem("Block Executable...");
-        menu.Items.AddRange([copy, filterProcess, new ToolStripSeparator(), openLocation, lookup, new ToolStripSeparator(), block]);
+        var askGemini = new ToolStripMenuItem("Ask Gemini...");
+        menu.Items.AddRange([copy, filterProcess, new ToolStripSeparator(), openLocation, lookup, new ToolStripSeparator(), block,
+            new ToolStripSeparator(), askGemini]);
+        askGemini.Click += (_, _) => AskGemini(list);
 
         (string? Path, string Name)? Selected() => list.SelectedItems.Count == 0 ? null : list.SelectedItems[0].Tag switch
         {
@@ -221,7 +224,9 @@ internal sealed class FirewallPanel : UserControl
         var copy = new ToolStripMenuItem("Copy");
         var openLocation = new ToolStripMenuItem("Open Program Location");
         var raw = new ToolStripMenuItem("Show Rule Definition...");
-        menu.Items.AddRange([copy, openLocation, raw]);
+        var askGemini = new ToolStripMenuItem("Ask Gemini...");
+        menu.Items.AddRange([copy, openLocation, raw, new ToolStripSeparator(), askGemini]);
+        askGemini.Click += (_, _) => AskGemini(_rules);
         FirewallRule? Selected() => _rules.SelectedItems.Count == 0 ? null : _rules.SelectedItems[0].Tag as FirewallRule;
         menu.Opening += (_, args) =>
         {
@@ -237,6 +242,35 @@ internal sealed class FirewallPanel : UserControl
                     "Firewall rule", MessageBoxButtons.OK, MessageBoxIcon.Information);
         };
         return menu;
+    }
+
+    /// <summary>Sends the selected rows (up to 10) to Gemini through the agy CLI.</summary>
+    private void AskGemini(ListView list)
+    {
+        var rows = list.SelectedItems.Cast<ListViewItem>().Take(10).Select(i => i.Tag).ToList();
+        var reports = rows.Select(tag => tag switch
+        {
+            NetworkEndpoint e => EventReport.Build(e),
+            ConnectionHistoryEntry h => EventReport.Build(h),
+            FirewallRule r => EventReport.Build(r),
+            _ => null,
+        }).OfType<string>().ToList();
+        if (reports.Count == 0) return;
+
+        var kind = rows[0] switch
+        {
+            FirewallRule => "firewall rule",
+            ConnectionHistoryEntry => "network connection",
+            NetworkEndpoint { RemoteAddress: null } => "listening network port",
+            _ => "network connection",
+        };
+        var context = _snapshot is { } s
+            ? $"\n\n(Context: Windows Firewall is {(s.Firewall.ServiceRunning ? string.Join(", ", s.Firewall.Profiles.Select(p => $"{p.Name} {(p.Enabled ? "on" : "off")}")) : "not running")}.)"
+            : "";
+        AskGeminiForm.Show(FindForm(),
+            reports.Count == 1 ? kind : $"{reports.Count} items",
+            reports.Count == 1 ? $"this {kind} seen on their PC" : $"these {reports.Count} items from the Windows Firewall view",
+            string.Join("\n\n----------\n\n", reports) + context);
     }
 
     private static void CopySelected(ListView list)

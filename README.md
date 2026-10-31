@@ -175,6 +175,21 @@ Right-click an event in the dashboard:
 Acknowledged events are deleted after the retention period (default 90 days, set in Settings); anything
 older than a year is removed regardless.
 
+## Ask Gemini
+
+Right-click one or more entries in the **Events** tab (up to 10) or the **Firewall** tab (ports, connections,
+history, firewall rules) → **Ask Gemini…**. WinGaurdian builds a question containing the full details (for
+events, including the scheduled-task analysis), sends it to Google Gemini through your own **Gemini CLI
+(`agy`)** under your account, and shows the answer as it streams in. The window shows exactly what was sent;
+you can edit the question and **Ask Again**, **Stop**, or **Copy Answer**.
+
+Safety: the CLI runs in **plan mode** (verified: it cannot edit files or run commands there; in normal print
+mode it can), from an empty temporary folder that is deleted afterwards, with a 3-minute limit. The collected
+details are marked as untrusted data in the prompt, because file names and command lines can be chosen by
+malware. Nothing is sent until you choose Ask Gemini.
+
+`agy.exe` is found in `%LOCALAPPDATA%\agy\bin` or on your `PATH`; set `WINGUARDIAN_AGY_PATH` to override.
+
 ## Hash reputation (API keys)
 
 Open **Settings…** from the tray menu (UAC prompt) and enter either or both keys:

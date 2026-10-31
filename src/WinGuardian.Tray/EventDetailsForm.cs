@@ -32,7 +32,7 @@ internal sealed class EventDetailsForm : Form
     {
         _event = e;
         var analysis = TaskAnalysisFormatter.TryParse(e.Analysis);
-        _report = analysis is not null ? TaskAnalysisFormatter.Format(e, analysis) : BasicReport(e);
+        _report = EventReport.Build(e);
         _json = e.Analysis is not null ? Reindent(e.Analysis) : JsonSerializer.Serialize(e, Indented);
 
         Text = $"WinGaurdian - Event #{e.Id}";
@@ -161,11 +161,4 @@ internal sealed class EventDetailsForm : Form
         return JsonSerializer.Serialize(doc.RootElement, Indented);
     }
 
-    private static string BasicReport(GuardianEvent e) =>
-        $"EVENT #{e.Id}\nSeverity: {e.Severity}\nType: {e.Category} {e.Change}\n\n" +
-        $"Subject:\n  {e.Subject}\n\nTimestamp:\n  {e.TimeUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n\n" +
-        $"Details:\n  {e.Details}\n" +
-        (e.FilePath is null ? "" : $"\nFile:\n  {e.FilePath}\n") +
-        (e.Signature is null ? "" : $"\nDigital Signature:\n  {e.Signature}\n") +
-        (e.Sha256 is null ? "" : $"\nSHA-256:\n  {e.Sha256}\n");
 }

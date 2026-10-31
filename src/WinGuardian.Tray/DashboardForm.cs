@@ -219,12 +219,13 @@ internal sealed class DashboardForm : Form
         var trustPublisher = new ToolStripMenuItem("Trust This Publisher");
         var quarantine = new ToolStripMenuItem("Quarantine File...");
         var block = new ToolStripMenuItem("Block Executable...");
+        var askGemini = new ToolStripMenuItem("Ask Gemini...");
         var lookup = new ToolStripMenuItem("Look Up Hash Online");
         var openVt = new ToolStripMenuItem("Open in VirusTotal (browser)");
         var copy = new ToolStripMenuItem("Copy Details");
 
         menu.Items.AddRange([acknowledge, details, new ToolStripSeparator(), trustFile, trustFolder, trustHash, trustItem, trustPublisher,
-            new ToolStripSeparator(), quarantine, block, lookup, openVt, new ToolStripSeparator(), copy]);
+            new ToolStripSeparator(), quarantine, block, lookup, openVt, new ToolStripSeparator(), askGemini, copy]);
 
         menu.Opening += (_, args) =>
         {
@@ -254,6 +255,7 @@ internal sealed class DashboardForm : Form
                                          or EventCategory.ScheduledTask or EventCategory.Network;
             trustPublisher.Text = $"Trust Everything Signed by \"{e.Signer}\"";
             quarantine.Visible = single && e.FilePath is not null && e.Category != EventCategory.Tamper && e.Change != ChangeKind.Removed;
+            askGemini.Text = selected.Count == 1 ? "Ask Gemini..." : $"Ask Gemini About {Math.Min(selected.Count, MaxGeminiItems)} Events...";
             // Always listed so it's discoverable; greyed out (with the reason) when nothing selected can be blocked.
             var blockable = BlockableEvents(selected);
             var paths = blockable.Select(x => x.FilePath!).Distinct(StringComparer.OrdinalIgnoreCase).Count();
@@ -286,6 +288,7 @@ internal sealed class DashboardForm : Form
         }, e => e.TrustKey);
         trustPublisher.Click += async (_, _) => await TrustAsync(TrustKind.Publisher, e => e.Signer);
         quarantine.Click += async (_, _) => await QuarantineSelectedAsync();
+        askGemini.Click += async (_, _) => await AskGeminiAsync();
         block.Click += async (_, _) =>
         {
             var events = BlockableEvents(SelectedEvents());
@@ -303,6 +306,26 @@ internal sealed class DashboardForm : Form
         openVt.Click += (_, _) => SettingsForm.OpenUrl($"https://www.virustotal.com/gui/file/{SelectedEvents()[0].Sha256}");
         copy.Click += (_, _) => Clipboard.SetText(string.Join(Environment.NewLine + Environment.NewLine, SelectedEvents().Select(Describe)));
         return menu;
+    }
+
+    private const int MaxGeminiItems = 10;
+
+    /// <summary>Sends the selected events (with their full analysis) to Gemini through the agy CLI.</summary>
+    private async Task AskGeminiAsync()
+    {
+        var selected = SelectedEvents().Take(MaxGeminiItems).ToList();
+        if (selected.Count == 0) return;
+        var reports = new List<string>();
+        foreach (var e in selected)
+        {
+            // The list omits the (large) analysis; fetch each event in full so Gemini sees everything.
+            var full = await TryQueryAsync(new PipeRequest { Command = PipeProtocol.Commands.Event, Id = e.Id.ToString() });
+            reports.Add(EventReport.Build(full?.Events is [var complete] ? complete : e));
+        }
+        AskGeminiForm.Show(this,
+            selected.Count == 1 ? $"event #{selected[0].Id}" : $"{selected.Count} events",
+            selected.Count == 1 ? "this WinGaurdian security event" : $"these {selected.Count} related WinGaurdian security events",
+            string.Join("\n\n----------\n\n", reports));
     }
 
     /// <summary>Events that name a program file that still exists conceptually (not tamper notices or deleted files).</summary>
