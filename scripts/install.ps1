@@ -53,5 +53,10 @@ Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$trayExe`""
 
 Write-Host ''
 Write-Host "WinGuardian installed to $InstallDir" -ForegroundColor Green
-Write-Host 'The first launch builds the baseline (a full scan of C:\Windows); this can take a while.'
-Write-Host 'Progress is shown in the tray icon tooltip and dashboard.'
+if ($existing) {
+    Write-Host 'Upgraded in place; the existing baseline, trust list and quarantine were kept.'
+} else {
+    Write-Host 'The first launch builds the baseline (a full scan of C:\Windows); this can take a while.'
+    Write-Host 'Progress is shown in the tray icon tooltip and dashboard.'
+}
+Write-Host 'Add your free MalwareBazaar / VirusTotal API keys via the tray icon: right-click > Settings...'
