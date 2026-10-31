@@ -181,12 +181,30 @@ public sealed class PipeServer(
 
             case PipeProtocol.Commands.Block:
             {
-                if (string.IsNullOrWhiteSpace(request.Path)) return PipeResponse.Fail("No file path given.");
-                var item = blocker.Block(request.Path, request.Note ?? "Blocked by an administrator");
-                if (request.Ids is { Count: > 0 }) db.Acknowledge(request.Ids);
-                return PipeResponse.Success(
-                    (item.AclApplied ? "Blocked: Windows will refuse to run this file." : "Blocked: the file's permissions could not be changed (system-owned), so WinGaurdian will terminate it whenever it starts.") +
-                    (item.Services.Count > 0 ? $"\n\nStopped and disabled service(s): {string.Join(", ", item.Services.Select(s => s.Name))}." : ""));
+                var paths = (request.Paths ?? (request.Path is null ? [] : [request.Path]))
+                    .Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (paths.Count == 0) return PipeResponse.Fail("No file path given.");
+
+                var lines = new List<string>();
+                var blocked = 0;
+                foreach (var path in paths)
+                {
+                    try
+                    {
+                        var item = blocker.Block(path, request.Note ?? "Blocked by an administrator");
+                        blocked++;
+                        lines.Add($"Blocked {Path.GetFileName(path)}: " +
+                                  (item.AclApplied ? "Windows will refuse to run it." : "system-owned file, so it will be terminated whenever it starts.") +
+                                  (item.Services.Count > 0 ? $" Stopped and disabled service(s): {string.Join(", ", item.Services.Select(s => s.Name))}." : ""));
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or FileNotFoundException or IOException or UnauthorizedAccessException)
+                    {
+                        lines.Add($"Not blocked {Path.GetFileName(path)}: {ex.Message}");
+                    }
+                }
+                if (blocked > 0 && request.Ids is { Count: > 0 }) db.Acknowledge(request.Ids);
+                var summary = string.Join("\n", lines);
+                return blocked > 0 ? PipeResponse.Success(summary) : PipeResponse.Fail(summary);
             }
 
             case PipeProtocol.Commands.Unblock:

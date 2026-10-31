@@ -61,6 +61,9 @@ public sealed class PipeRequest
     public List<long>? Ids { get; set; }
     public string? Id { get; set; }
     public string? Path { get; set; }
+
+    /// <summary>Several files for one request (e.g. blocking multiple selected events at once).</summary>
+    public List<string>? Paths { get; set; }
     public string? Sha256 { get; set; }
     public string? Note { get; set; }
     public TrustKind? TrustKind { get; set; }

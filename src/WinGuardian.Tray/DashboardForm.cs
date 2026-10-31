@@ -254,7 +254,16 @@ internal sealed class DashboardForm : Form
                                          or EventCategory.ScheduledTask or EventCategory.Network;
             trustPublisher.Text = $"Trust Everything Signed by \"{e.Signer}\"";
             quarantine.Visible = single && e.FilePath is not null && e.Category != EventCategory.Tamper && e.Change != ChangeKind.Removed;
-            block.Visible = quarantine.Visible;
+            // Always listed so it's discoverable; greyed out (with the reason) when nothing selected can be blocked.
+            var blockable = BlockableEvents(selected);
+            var paths = blockable.Select(x => x.FilePath!).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            block.Enabled = paths > 0;
+            block.Text = paths switch
+            {
+                0 => "Block Executable (no program file in this event)",
+                1 => "Block Executable...",
+                _ => $"Block {paths} Executables...",
+            };
             lookup.Visible = single && (e.Sha256 is not null || e.FilePath is not null) && e.Category != EventCategory.Tamper;
             openVt.Visible = single && e.Sha256 is not null;
         };
@@ -279,8 +288,11 @@ internal sealed class DashboardForm : Form
         quarantine.Click += async (_, _) => await QuarantineSelectedAsync();
         block.Click += async (_, _) =>
         {
-            var e = SelectedEvents()[0];
-            if (await ServiceCommands.ConfirmAndBlockAsync(this, e.FilePath!, $"From event #{e.Id}: {e.Subject}", [e.Id]))
+            var events = BlockableEvents(SelectedEvents());
+            if (events.Count == 0) return;
+            var paths = events.Select(x => x.FilePath!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var note = events.Count == 1 ? $"From event #{events[0].Id}: {events[0].Subject}" : $"From events {string.Join(", ", events.Select(x => "#" + x.Id))}";
+            if (await ServiceCommands.ConfirmAndBlockAsync(this, paths, note, events.Select(x => x.Id).ToList()))
                 await RefreshAllAsync();
         };
         lookup.Click += async (_, _) =>
@@ -292,6 +304,11 @@ internal sealed class DashboardForm : Form
         copy.Click += (_, _) => Clipboard.SetText(string.Join(Environment.NewLine + Environment.NewLine, SelectedEvents().Select(Describe)));
         return menu;
     }
+
+    /// <summary>Events that name a program file that still exists conceptually (not tamper notices or deleted files).</summary>
+    private static List<GuardianEvent> BlockableEvents(IEnumerable<GuardianEvent> events) =>
+        events.Where(e => e.FilePath is not null && e.Category != EventCategory.Tamper && e.Change != ChangeKind.Removed &&
+                          Path.HasExtension(e.FilePath)).ToList();
 
     private async Task TrustAsync(TrustKind kind, Func<GuardianEvent, string?> valueOf)
     {

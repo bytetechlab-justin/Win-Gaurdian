@@ -58,24 +58,31 @@ internal static class ServiceCommands
             "WinGaurdian", MessageBoxButtons.OK, response.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
 
     /// <summary>Asks for confirmation (with extra warnings for Windows files) and blocks the program.</summary>
-    public static async Task<bool> ConfirmAndBlockAsync(IWin32Window? owner, string path, string note, List<long>? eventIds = null)
+    public static Task<bool> ConfirmAndBlockAsync(IWin32Window? owner, string path, string note, List<long>? eventIds = null) =>
+        ConfirmAndBlockAsync(owner, [path], note, eventIds);
+
+    /// <summary>Blocks one or more programs after a single confirmation (and at most one UAC prompt).</summary>
+    public static async Task<bool> ConfirmAndBlockAsync(IWin32Window? owner, IReadOnlyList<string> paths, string note, List<long>? eventIds = null)
     {
-        var inWindows = path.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows) + "\\", StringComparison.OrdinalIgnoreCase);
+        if (paths.Count == 0) return false;
+        var windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows) + "\\";
+        var inWindows = paths.Where(p => p.StartsWith(windowsDir, StringComparison.OrdinalIgnoreCase)).ToList();
+        var list = string.Join("\n", paths.Take(15)) + (paths.Count > 15 ? $"\n... and {paths.Count - 15} more" : "");
         var message =
-            $"Block this program?\n\n{path}\n\n" +
+            (paths.Count == 1 ? "Block this program?" : $"Block these {paths.Count} programs?") + $"\n\n{list}\n\n" +
             "WinGaurdian will:\n" +
             "  - deny permission to run it (Windows will refuse to start it or load it as a DLL),\n" +
             "  - terminate it now and whenever it (or a renamed copy) starts,\n" +
             "  - stop and disable any Windows service that runs it.\n\n" +
             "You can undo this from the Blocked tab.";
-        if (inWindows)
-            message += "\n\nWARNING: this file is part of the Windows folder. Blocking a legitimate Windows component can break features or Windows itself.";
+        if (inWindows.Count > 0)
+            message += $"\n\nWARNING: {(paths.Count == 1 ? "this file is" : $"{inWindows.Count} of these files are")} in the Windows folder. " +
+                       "Blocking a legitimate Windows component can break features or Windows itself.";
         if (MessageBox.Show(owner, message, "WinGaurdian - Block Executable", MessageBoxButtons.YesNo,
-                inWindows ? MessageBoxIcon.Warning : MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                inWindows.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             return false;
-        return await SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Block, Path = path, Note = note, Ids = eventIds }, owner);
+        return await SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Block, Paths = [.. paths], Note = note, Ids = eventIds }, owner);
     }
-
     public static void OpenSettings()
     {
         if (IsElevated)
