@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WinGuardian.Core/WinGuardian.Core.csproj" />
+    <Project Path="src/WinGuardian.Service/WinGuardian.Service.csproj" />
+    <Project Path="src/WinGuardian.Tray/WinGuardian.Tray.csproj" />
+  </Folder>
+</Solution>

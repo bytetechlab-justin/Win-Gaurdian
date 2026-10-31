@@ -1,0 +1,402 @@
+﻿using WinGuardian.Core;
+using WinGuardian.Core.Ipc;
+
+namespace WinGuardian.Tray;
+
+/// <summary>Status summary plus tabs for events, quarantine and the trust list (built in code, no designer).</summary>
+internal sealed class DashboardForm : Form
+{
+    private readonly Label _statusLabel;
+    private readonly CheckBox _unackOnly;
+    private readonly ListView _events;
+    private readonly ListView _quarantine;
+    private readonly ListView _trusted;
+    private readonly TabControl _tabs;
+    private bool _refreshQueued;
+
+    public DashboardForm()
+    {
+        Text = "WinGuardian";
+        Width = 1200;
+        Height = 700;
+        StartPosition = FormStartPosition.CenterScreen;
+        Icon = IconFactory.CreateShield(Color.FromArgb(46, 160, 67));
+        Font = new Font("Segoe UI", 9f);
+
+        _statusLabel = new Label { Dock = DockStyle.Top, Height = 105, Padding = new Padding(10), Text = "Connecting..." };
+
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(6, 4, 6, 4) };
+        toolbar.Controls.Add(MakeButton("Refresh", RefreshAllAsync));
+        toolbar.Controls.Add(MakeButton("Run Full Scan", async () =>
+        {
+            await ServiceCommands.SendAsync(PipeProtocol.Commands.Scan, this);
+            await RefreshAllAsync();
+        }));
+        toolbar.Controls.Add(MakeButton("Acknowledge All", async () =>
+        {
+            await ServiceCommands.SendAsync(PipeProtocol.Commands.Acknowledge, this);
+            await RefreshAllAsync();
+        }));
+        toolbar.Controls.Add(MakeButton("Rebuild Baseline...", () => TrayApplicationContext.ConfirmRebuildAsync(this)));
+        toolbar.Controls.Add(MakeButton("Settings...", () =>
+        {
+            ServiceCommands.OpenSettings();
+            return RefreshAllAsync();
+        }));
+        _unackOnly = new CheckBox { Text = "Unacknowledged only", AutoSize = true, Margin = new Padding(16, 8, 0, 0) };
+        _unackOnly.CheckedChanged += async (_, _) => await RefreshEventsAsync();
+        toolbar.Controls.Add(_unackOnly);
+
+        _events = MakeList(("ID", 55), ("Time", 130), ("Severity", 65), ("Category", 80), ("Change", 75), ("Subject", 420), ("Signature", 230), ("Details", 700));
+        _events.DoubleClick += (_, _) => ShowSelectedDetails();
+        _events.ContextMenuStrip = BuildEventMenu();
+
+        _quarantine = MakeList(("Quarantined", 130), ("Original location", 450), ("Size", 90), ("Reason", 300), ("SHA256", 450));
+        var quarantineButtons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 38, Padding = new Padding(4) };
+        quarantineButtons.Controls.Add(MakeButton("Restore", () => QuarantineActionAsync(PipeProtocol.Commands.Restore,
+            "Restore this file to its original location? Its path will be added to the trusted list.")));
+        quarantineButtons.Controls.Add(MakeButton("Delete Permanently", () => QuarantineActionAsync(PipeProtocol.Commands.DeleteQuarantined,
+            "Permanently delete this file? This cannot be undone.")));
+        quarantineButtons.Controls.Add(MakeButton("Refresh", RefreshQuarantineAsync));
+
+        _trusted = MakeList(("Kind", 90), ("Value", 650), ("Added", 130), ("Note", 300));
+        var trustedButtons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 38, Padding = new Padding(4) };
+        trustedButtons.Controls.Add(MakeButton("Remove Trust", RemoveTrustAsync));
+        trustedButtons.Controls.Add(MakeButton("Refresh", RefreshTrustedAsync));
+
+        _tabs = new TabControl { Dock = DockStyle.Fill };
+        _tabs.TabPages.Add(MakeTab("Events", _events));
+        _tabs.TabPages.Add(MakeTab("Quarantine", _quarantine, quarantineButtons));
+        _tabs.TabPages.Add(MakeTab("Trusted Items", _trusted, trustedButtons));
+        _tabs.SelectedIndexChanged += async (_, _) => await RefreshCurrentTabAsync();
+
+        Controls.Add(_tabs);
+        Controls.Add(toolbar);
+        Controls.Add(_statusLabel);
+
+        Shown += async (_, _) => await RefreshAllAsync();
+    }
+
+    // ------------------------------------------------------------------ status
+
+    public void ApplyStatus(GuardianStatus s)
+    {
+        string When(DateTime? utc) => utc?.ToLocalTime().ToString("g") ?? "never";
+        string OnOff(bool on) => on ? "on" : "off";
+        var progress = s.ScanInProgress ? $"  -  {s.ScanFilesProcessed:N0} files processed" : "";
+        _statusLabel.ForeColor = SystemColors.ControlText;
+        _statusLabel.Text =
+            $"Service v{s.ServiceVersion}: {s.Phase}{progress}\n" +
+            $"Baseline created: {When(s.BaselineCreatedUtc)}    Last full scan: {When(s.LastFullScanUtc)}\n" +
+            $"Baseline: {s.BaselineFileCount:N0} files, {s.BaselineProcessCount:N0} executables, {s.BaselineServiceCount:N0} services/drivers, {s.BaselinePersistenceCount:N0} autostart entries\n" +
+            $"Real-time process tracing (ETW): {OnOff(s.EtwProcessTracing)}    MalwareBazaar: {OnOff(s.MalwareBazaarConfigured)}    VirusTotal: {OnOff(s.VirusTotalConfigured)}    Quarantined files: {s.QuarantineCount}\n" +
+            $"Unacknowledged alerts: {s.UnacknowledgedCount:N0}" +
+            (s.LastError is null ? "" : $"    Last error: {s.LastError}");
+    }
+
+    public void ApplyDisconnected(string? message = null)
+    {
+        _statusLabel.ForeColor = Color.Firebrick;
+        _statusLabel.Text = message ?? "The WinGuardian service is not running or cannot be reached.";
+    }
+
+    /// <summary>Called by the tray when new events arrive; coalesced so bursts trigger one reload.</summary>
+    public void RefreshEventsSoon()
+    {
+        if (_refreshQueued || IsDisposed) return;
+        _refreshQueued = true;
+        BeginInvoke(async () =>
+        {
+            _refreshQueued = false;
+            await RefreshEventsAsync();
+        });
+    }
+
+    private async Task RefreshAllAsync()
+    {
+        try
+        {
+            var response = await PipeClient.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Status });
+            if (response.Status is not null) ApplyStatus(response.Status);
+        }
+        catch (ServerVerificationException ex)
+        {
+            ApplyDisconnected(ex.Message);
+            return;
+        }
+        catch
+        {
+            ApplyDisconnected();
+            return;
+        }
+        await RefreshCurrentTabAsync();
+    }
+
+    private Task RefreshCurrentTabAsync() => _tabs.SelectedIndex switch
+    {
+        1 => RefreshQuarantineAsync(),
+        2 => RefreshTrustedAsync(),
+        _ => RefreshEventsAsync(),
+    };
+
+    // ------------------------------------------------------------------ events
+
+    private async Task RefreshEventsAsync()
+    {
+        var response = await TryQueryAsync(new PipeRequest
+        {
+            Command = PipeProtocol.Commands.Events,
+            Limit = 1000,
+            UnacknowledgedOnly = _unackOnly.Checked,
+        });
+        if (response is null) return;
+
+        Fill(_events, response.Events ?? [], e => new ListViewItem(
+        [
+            e.Id.ToString(),
+            e.TimeUtc.ToLocalTime().ToString("g"),
+            e.Severity.ToString(),
+            e.Category.ToString(),
+            e.Change.ToString(),
+            e.Subject,
+            e.Signature ?? "",
+            (e.Details ?? "").Replace('\n', ' '),
+        ])
+        {
+            Tag = e,
+            BackColor = e.Severity switch
+            {
+                Severity.High => Color.FromArgb(255, 220, 220),
+                Severity.Medium => Color.FromArgb(255, 243, 205),
+                _ => SystemColors.Window,
+            },
+            ForeColor = e.Acknowledged ? SystemColors.GrayText : SystemColors.WindowText,
+        });
+    }
+
+    private List<GuardianEvent> SelectedEvents() =>
+        _events.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<GuardianEvent>().ToList();
+
+    private ContextMenuStrip BuildEventMenu()
+    {
+        var menu = new ContextMenuStrip();
+        var acknowledge = new ToolStripMenuItem("Acknowledge Selected");
+        var details = new ToolStripMenuItem("Show Details...");
+        var trustFile = new ToolStripMenuItem("Trust This File");
+        var trustFolder = new ToolStripMenuItem("Trust Everything in This Folder");
+        var trustHash = new ToolStripMenuItem("Trust This File Content (Hash)");
+        var trustItem = new ToolStripMenuItem("Trust This Item");
+        var trustPublisher = new ToolStripMenuItem("Trust This Publisher");
+        var quarantine = new ToolStripMenuItem("Quarantine File...");
+        var lookup = new ToolStripMenuItem("Look Up Hash Online");
+        var openVt = new ToolStripMenuItem("Open in VirusTotal (browser)");
+        var copy = new ToolStripMenuItem("Copy Details");
+
+        menu.Items.AddRange([acknowledge, details, new ToolStripSeparator(), trustFile, trustFolder, trustHash, trustItem, trustPublisher,
+            new ToolStripSeparator(), quarantine, lookup, openVt, new ToolStripSeparator(), copy]);
+
+        menu.Opening += (_, args) =>
+        {
+            var selected = SelectedEvents();
+            if (selected.Count == 0) { args.Cancel = true; return; }
+            var e = selected[0];
+            var single = selected.Count == 1;
+            var fileEvent = e.Category is EventCategory.File or EventCategory.Process && e.FilePath is not null;
+
+            details.Enabled = single;
+            trustHash.Visible = single && e.Sha256 is not null;
+            var behavior = e.Category == EventCategory.Process && e.Change == ChangeKind.Detected;
+            trustFile.Visible = trustFolder.Visible = single && fileEvent && !behavior;
+            trustItem.Visible = single && e.TrustKey is not null && (behavior || e.Category is EventCategory.Service or EventCategory.Persistence);
+            trustItem.Text = behavior ? "Trust This Behavior From This Parent Program"
+                : e.Category == EventCategory.Service ? "Trust This Service" : "Trust This Autostart Entry";
+            trustPublisher.Visible = single && e.Signer is not null && !behavior &&
+                                     e.Category is EventCategory.File or EventCategory.Process or EventCategory.Service or EventCategory.Persistence;
+            trustPublisher.Text = $"Trust Everything Signed by \"{e.Signer}\"";
+            quarantine.Visible = single && e.FilePath is not null && e.Category != EventCategory.Tamper && e.Change != ChangeKind.Removed;
+            lookup.Visible = single && (e.Sha256 is not null || e.FilePath is not null) && e.Category != EventCategory.Tamper;
+            openVt.Visible = single && e.Sha256 is not null;
+        };
+
+        acknowledge.Click += async (_, _) =>
+        {
+            var ids = SelectedEvents().Select(e => e.Id).ToList();
+            if (await ServiceCommands.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Acknowledge, Ids = ids }, this, showSuccess: false))
+                await RefreshEventsAsync();
+        };
+        details.Click += (_, _) => ShowSelectedDetails();
+        trustFile.Click += async (_, _) => await TrustAsync(TrustKind.Path, e => e.FilePath);
+        trustFolder.Click += async (_, _) => await TrustAsync(TrustKind.Folder, e => Path.GetDirectoryName(e.FilePath));
+        trustHash.Click += async (_, _) => await TrustAsync(TrustKind.Hash, e => e.Sha256);
+        trustItem.Click += async (_, _) => await TrustAsync(SelectedEvents()[0] switch
+        {
+            { Category: EventCategory.Process } => TrustKind.Behavior,
+            { Category: EventCategory.Service } => TrustKind.Service,
+            _ => TrustKind.Persistence,
+        }, e => e.TrustKey);
+        trustPublisher.Click += async (_, _) => await TrustAsync(TrustKind.Publisher, e => e.Signer);
+        quarantine.Click += async (_, _) => await QuarantineSelectedAsync();
+        lookup.Click += async (_, _) =>
+        {
+            var e = SelectedEvents()[0];
+            await ServiceCommands.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Lookup, Sha256 = e.Sha256, Path = e.FilePath }, this);
+        };
+        openVt.Click += (_, _) => SettingsForm.OpenUrl($"https://www.virustotal.com/gui/file/{SelectedEvents()[0].Sha256}");
+        copy.Click += (_, _) => Clipboard.SetText(string.Join(Environment.NewLine + Environment.NewLine, SelectedEvents().Select(Describe)));
+        return menu;
+    }
+
+    private async Task TrustAsync(TrustKind kind, Func<GuardianEvent, string?> valueOf)
+    {
+        var e = SelectedEvents().FirstOrDefault();
+        if (e is null || valueOf(e) is not { } value) return;
+
+        var explanation = kind switch
+        {
+            TrustKind.Folder => $"Stop alerting on changes to any file in:\n{value}\n\nOnly do this for folders that change legitimately.",
+            TrustKind.Hash => $"Trust this exact file content wherever it appears:\nSHA256 {value}",
+            TrustKind.Publisher => $"Stop alerting on files, programs, services and autostart entries with a valid signature from:\n{value}\n\n" +
+                                   "Only do this for publishers you trust completely. Tampered or unsigned files are still reported.",
+            _ => $"Stop alerting on:\n{value}",
+        };
+        if (MessageBox.Show(this, explanation, "WinGuardian - Trust", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            return;
+
+        if (await ServiceCommands.SendAsync(new PipeRequest
+            {
+                Command = PipeProtocol.Commands.Trust,
+                TrustKind = kind,
+                Value = value,
+                Note = $"From event #{e.Id}: {e.Category} {e.Change}",
+                Ids = [e.Id],
+            }, this))
+            await RefreshEventsAsync();
+    }
+
+    private async Task QuarantineSelectedAsync()
+    {
+        var e = SelectedEvents().FirstOrDefault();
+        if (e?.FilePath is null) return;
+
+        var inWindows = e.FilePath.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows) + "\\", StringComparison.OrdinalIgnoreCase);
+        var message = $"Quarantine this file?\n\n{e.FilePath}\n\nAny process running it will be terminated and the file moved to quarantine. You can restore it later.";
+        if (inWindows)
+            message += "\n\nWARNING: this file is inside the Windows folder. Removing a legitimate system file can break Windows. Only continue if you are sure it is malicious.";
+
+        if (MessageBox.Show(this, message, "WinGuardian - Quarantine", MessageBoxButtons.YesNo,
+                inWindows ? MessageBoxIcon.Warning : MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+
+        if (await ServiceCommands.SendAsync(new PipeRequest
+            {
+                Command = PipeProtocol.Commands.Quarantine,
+                Path = e.FilePath,
+                Note = $"Manual, from event #{e.Id}: {e.Subject}",
+                Ids = [e.Id],
+            }, this))
+            await RefreshAllAsync();
+    }
+
+    private void ShowSelectedDetails()
+    {
+        if (SelectedEvents().FirstOrDefault() is not { } e) return;
+        MessageBox.Show(this, Describe(e), "Event #" + e.Id, MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private static string Describe(GuardianEvent e) =>
+        $"{e.TimeUtc.ToLocalTime():F}\nSeverity: {e.Severity}\n{e.Category} {e.Change}\n\n{e.Subject}\n\n{e.Details}" +
+        (e.FilePath is null ? "" : $"\n\nFile: {e.FilePath}") +
+        (e.Sha256 is null ? "" : $"\nSHA256: {e.Sha256}");
+
+    // -------------------------------------------------------------- quarantine
+
+    private async Task RefreshQuarantineAsync()
+    {
+        var response = await TryQueryAsync(new PipeRequest { Command = PipeProtocol.Commands.Quarantined });
+        if (response is null) return;
+        Fill(_quarantine, response.Quarantined ?? [], q => new ListViewItem(
+        [
+            q.QuarantinedUtc.ToLocalTime().ToString("g"),
+            q.OriginalPath + (q.PendingReboot ? "  (original deleted at next reboot)" : ""),
+            $"{q.Size:N0}",
+            q.Reason ?? "",
+            q.Sha256 ?? "",
+        ]) { Tag = q });
+    }
+
+    private async Task QuarantineActionAsync(string command, string confirmation)
+    {
+        if (_quarantine.SelectedItems.Count == 0 || _quarantine.SelectedItems[0].Tag is not QuarantineItem item) return;
+        if (MessageBox.Show(this, $"{confirmation}\n\n{item.OriginalPath}", "WinGuardian - Quarantine",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+        if (await ServiceCommands.SendAsync(new PipeRequest { Command = command, Id = item.Id }, this))
+            await RefreshQuarantineAsync();
+    }
+
+    // ----------------------------------------------------------------- trusted
+
+    private async Task RefreshTrustedAsync()
+    {
+        var response = await TryQueryAsync(new PipeRequest { Command = PipeProtocol.Commands.Trusted });
+        if (response is null) return;
+        Fill(_trusted, response.Trusted ?? [], t => new ListViewItem(
+            [t.Kind.ToString(), t.Value, t.AddedUtc.ToLocalTime().ToString("g"), t.Note ?? ""]) { Tag = t });
+    }
+
+    private async Task RemoveTrustAsync()
+    {
+        if (_trusted.SelectedItems.Count == 0 || _trusted.SelectedItems[0].Tag is not TrustEntry t) return;
+        if (await ServiceCommands.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Untrust, TrustKind = t.Kind, Value = t.Value }, this))
+            await RefreshTrustedAsync();
+    }
+
+    // ----------------------------------------------------------------- helpers
+
+    private async Task<PipeResponse?> TryQueryAsync(PipeRequest request)
+    {
+        try
+        {
+            return await PipeClient.SendAsync(request);
+        }
+        catch (ServerVerificationException ex)
+        {
+            ApplyDisconnected(ex.Message);
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void Fill<T>(ListView list, IEnumerable<T> rows, Func<T, ListViewItem> toItem)
+    {
+        list.BeginUpdate();
+        list.Items.Clear();
+        foreach (var row in rows) list.Items.Add(toItem(row));
+        list.EndUpdate();
+    }
+
+    private static ListView MakeList(params (string Title, int Width)[] columns)
+    {
+        var list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true, HideSelection = false };
+        foreach (var (title, width) in columns) list.Columns.Add(title, width);
+        return list;
+    }
+
+    private static TabPage MakeTab(string title, Control content, Control? bottom = null)
+    {
+        var page = new TabPage(title);
+        page.Controls.Add(content);
+        if (bottom is not null) page.Controls.Add(bottom);
+        return page;
+    }
+
+    private static Button MakeButton(string text, Func<Task> onClick)
+    {
+        var button = new Button { Text = text, AutoSize = true };
+        button.Click += async (_, _) => await onClick();
+        return button;
+    }
+}
