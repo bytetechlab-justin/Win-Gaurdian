@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging.Configuration;
+using Microsoft.Extensions.Logging.Configuration;
 using Microsoft.Extensions.Logging.EventLog;
 using Microsoft.Extensions.Options;
 using WinGuardian.Core;
@@ -6,6 +6,7 @@ using WinGuardian.Core.Configuration;
 using WinGuardian.Core.Data;
 using WinGuardian.Core.Monitoring;
 using WinGuardian.Core.Reputation;
+using WinGuardian.Core.Network;
 using WinGuardian.Core.Tasks;
 using WinGuardian.Service;
 
@@ -45,6 +46,7 @@ builder.Services.AddSingleton<SelfProtection>();
 builder.Services.AddSingleton<ProcessHistory>();
 builder.Services.AddSingleton<ITaskAttributor, TaskAttributor>();
 builder.Services.AddSingleton<ScheduledTaskMonitor>();
+builder.Services.AddSingleton<NetworkMonitor>();
 builder.Services.AddSingleton<FileWatcherService>();
 
 builder.Services.AddHostedService<MonitorWorker>();

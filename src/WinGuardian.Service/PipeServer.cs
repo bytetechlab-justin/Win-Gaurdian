@@ -1,4 +1,4 @@
-﻿using System.IO.Pipes;
+using System.IO.Pipes;
 using System.Reflection;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -7,6 +7,7 @@ using WinGuardian.Core;
 using WinGuardian.Core.Data;
 using WinGuardian.Core.Ipc;
 using WinGuardian.Core.Monitoring;
+using WinGuardian.Core.Network;
 using WinGuardian.Core.Reputation;
 using WinGuardian.Core.Tasks;
 
@@ -20,6 +21,7 @@ public sealed class PipeServer(
     TrustStore trust,
     QuarantineManager quarantine,
     ReputationService reputation,
+    NetworkMonitor network,
     ILogger<PipeServer> logger) : BackgroundService
 {
     private static readonly string Version =
@@ -172,6 +174,9 @@ public sealed class PipeServer(
         {
             case PipeProtocol.Commands.Status:
                 return new PipeResponse { Ok = true, Status = BuildStatus() };
+
+            case PipeProtocol.Commands.Network:
+                return new PipeResponse { Ok = true, Network = network.GetSnapshot() };
 
             case PipeProtocol.Commands.Event:
             {

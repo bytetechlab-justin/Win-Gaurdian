@@ -1,4 +1,4 @@
-﻿namespace WinGuardian.Core;
+namespace WinGuardian.Core;
 
 public enum Severity
 {
@@ -18,6 +18,7 @@ public enum EventCategory
     Malware,
     Tamper,
     ScheduledTask,
+    Network,
 }
 
 public enum ChangeKind

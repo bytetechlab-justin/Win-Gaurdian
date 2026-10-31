@@ -1,7 +1,8 @@
-﻿using WinGuardian.Core;
+using WinGuardian.Core;
 using WinGuardian.Core.Configuration;
 using WinGuardian.Core.Data;
 using WinGuardian.Core.Monitoring;
+using WinGuardian.Core.Network;
 using WinGuardian.Core.Tasks;
 
 namespace WinGuardian.Service;
@@ -22,6 +23,7 @@ public sealed class MonitorWorker(
     ServiceMonitor serviceMonitor,
     PersistenceMonitor persistenceMonitor,
     ScheduledTaskMonitor taskMonitor,
+    NetworkMonitor networkMonitor,
     ProcessStartWatcher processStartWatcher,
     SelfProtection selfProtection,
     FileWatcherService watcher,
@@ -53,6 +55,11 @@ public sealed class MonitorWorker(
                     var tasks = await Task.Run(taskMonitor.CaptureBaseline, ct);
                     events.Info("Scheduled task baseline captured", $"{tasks} tasks recorded with their actions, COM handlers and signatures.");
                 }
+                if (!networkMonitor.HasBaseline)
+                {
+                    var listeners = await Task.Run(networkMonitor.CaptureBaseline, ct);
+                    events.Info("Network baseline captured", $"{listeners} listening ports and the current firewall rules recorded.");
+                }
                 taskMonitor.Start();
                 watcher.Start();
                 state.Phase = "Monitoring";
@@ -63,6 +70,7 @@ public sealed class MonitorWorker(
             var nextProcessPoll = DateTime.UtcNow;
             var nextServicePoll = DateTime.UtcNow;
             var nextPersistencePoll = DateTime.UtcNow;
+            var nextNetworkPoll = DateTime.UtcNow;
             var nextHeartbeat = DateTime.UtcNow;
             var nextPrune = DateTime.UtcNow;
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
@@ -88,6 +96,11 @@ public sealed class MonitorWorker(
                     RunSafely("persistence poll", persistenceMonitor.Poll);
                     RunSafely("scheduled task check", taskMonitor.Poll);
                     nextPersistencePoll = now.AddSeconds(options.PersistencePollSeconds);
+                }
+                if (now >= nextNetworkPoll && networkMonitor.HasBaseline)
+                {
+                    RunSafely("network poll", networkMonitor.Poll);
+                    nextNetworkPoll = now.AddSeconds(options.NetworkPollSeconds);
                 }
                 if (now >= nextHeartbeat)
                 {
@@ -163,6 +176,7 @@ public sealed class MonitorWorker(
         var services = serviceMonitor.CaptureBaseline();
         var persistence = persistenceMonitor.CaptureBaseline();
         var tasks = taskMonitor.CaptureBaseline();
+        networkMonitor.CaptureBaseline();
         taskMonitor.Start();
         events.Info("Process, service, persistence and scheduled task baseline captured",
             $"{processes} executables running, {services} services/drivers registered, {persistence} autostart entries, {tasks} scheduled tasks.");

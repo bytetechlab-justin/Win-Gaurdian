@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
@@ -21,6 +21,8 @@ public sealed class GuardianDatabase
     public const string MetaRuntimeSettings = "runtime_settings";
     public const string MetaTasksBaseline = "tasks_baseline_utc";
     public const string MetaAuditingEnabledByUs = "task_auditing_enabled_by_winguardian";
+    public const string MetaNetworkBaseline = "network_baseline_utc";
+    public const string MetaFirewallState = "firewall_state";
 
     private readonly string _connectionString;
 
@@ -120,6 +122,17 @@ public sealed class GuardianDatabase
                 state_json  TEXT NOT NULL,
                 updated_utc TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS listening_ports (
+                key            TEXT PRIMARY KEY COLLATE NOCASE,
+                protocol       TEXT NOT NULL,
+                port           INTEGER NOT NULL,
+                process        TEXT NOT NULL,
+                first_seen_utc TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS firewall_rules (
+                key TEXT PRIMARY KEY COLLATE NOCASE,
+                raw TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reputation (
                 sha256      TEXT NOT NULL COLLATE NOCASE,
                 provider    TEXT NOT NULL,
@@ -190,9 +203,11 @@ public sealed class GuardianDatabase
         Execute(c, tx, """
             DELETE FROM files; DELETE FROM processes; DELETE FROM services;
             DELETE FROM persistence; DELETE FROM persistence_scopes; DELETE FROM scheduled_tasks;
+            DELETE FROM listening_ports; DELETE FROM firewall_rules;
             """);
-        Execute(c, tx, "DELETE FROM meta WHERE key IN ($a, $b, $c, $d)",
-            ("$a", MetaBaselineCreated), ("$b", MetaLastFullScan), ("$c", MetaPersistenceBaseline), ("$d", MetaTasksBaseline));
+        Execute(c, tx, "DELETE FROM meta WHERE key IN ($a, $b, $c, $d, $e, $f)",
+            ("$a", MetaBaselineCreated), ("$b", MetaLastFullScan), ("$c", MetaPersistenceBaseline), ("$d", MetaTasksBaseline),
+            ("$e", MetaNetworkBaseline), ("$f", MetaFirewallState));
         tx.Commit();
     }
 
@@ -395,6 +410,45 @@ public sealed class GuardianDatabase
         var e = GetEvents(null, int.MaxValue, false, $"id = {id}").FirstOrDefault();
         if (e is not null) e.Analysis = Scalar(c, null, "SELECT analysis FROM events WHERE id = $id", ("$id", id)) as string;
         return e;
+    }
+
+    // ------------------------------------------------------------- network
+
+    public Dictionary<string, DateTime> GetListenerFirstSeen()
+    {
+        using var c = Open();
+        using var cmd = Command(c, null, "SELECT key, first_seen_utc FROM listening_ports");
+        using var r = cmd.ExecuteReader();
+        var result = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        while (r.Read()) result[r.GetString(0)] = ParseIso(r.GetString(1));
+        return result;
+    }
+
+    public void InsertListener(string key, string protocol, int port, string process)
+    {
+        using var c = Open();
+        Execute(c, null, "INSERT OR IGNORE INTO listening_ports(key, protocol, port, process, first_seen_utc) VALUES($k, $pr, $po, $p, $t)",
+            ("$k", key), ("$pr", protocol), ("$po", port), ("$p", process), ("$t", Iso(DateTime.UtcNow)));
+    }
+
+    public Dictionary<string, string> GetFirewallRules()
+    {
+        using var c = Open();
+        using var cmd = Command(c, null, "SELECT key, raw FROM firewall_rules");
+        using var r = cmd.ExecuteReader();
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        while (r.Read()) result[r.GetString(0)] = r.GetString(1);
+        return result;
+    }
+
+    public void ReplaceFirewallRules(IReadOnlyDictionary<string, string> rules)
+    {
+        using var c = Open();
+        using var tx = c.BeginTransaction();
+        Execute(c, tx, "DELETE FROM firewall_rules");
+        foreach (var (key, raw) in rules)
+            Execute(c, tx, "INSERT OR REPLACE INTO firewall_rules(key, raw) VALUES($k, $r)", ("$k", key), ("$r", raw));
+        tx.Commit();
     }
 
     // ----------------------------------------------------- scheduled tasks

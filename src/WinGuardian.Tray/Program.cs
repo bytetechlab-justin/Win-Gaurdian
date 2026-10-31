@@ -23,6 +23,12 @@ internal static class Program
             Application.Run(host);
             return 0;
         }
+        if (args.Length >= 1 && args[0] == "--dashboard")
+        {
+            // Opens just the dashboard (e.g. from a shortcut); "--dashboard firewall" selects that tab.
+            Application.Run(new DashboardForm(args.Length > 1 ? args[1] : null));
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--settings")
         {
             using var form = new SettingsForm();

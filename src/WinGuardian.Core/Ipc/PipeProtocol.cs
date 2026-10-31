@@ -1,4 +1,4 @@
-﻿using System.IO.Pipes;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
@@ -25,6 +25,7 @@ public static class PipeProtocol
         public const string Trusted = "trusted";
         public const string Quarantined = "quarantined";
         public const string Event = "event";
+        public const string Network = "network";
 
         public const string Acknowledge = "acknowledge";
         public const string Rebuild = "rebuild";
@@ -75,6 +76,7 @@ public sealed class PipeResponse
     public List<TrustEntry>? Trusted { get; set; }
     public List<QuarantineItem>? Quarantined { get; set; }
     public RuntimeSettings? Settings { get; set; }
+    public Network.NetworkSnapshot? Network { get; set; }
 
     public static PipeResponse Success(string? message = null) => new() { Ok = true, Message = message };
     public static PipeResponse Fail(string error) => new() { Ok = false, Error = error };

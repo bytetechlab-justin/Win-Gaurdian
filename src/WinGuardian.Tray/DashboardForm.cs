@@ -1,4 +1,4 @@
-﻿using WinGuardian.Core;
+using WinGuardian.Core;
 using WinGuardian.Core.Ipc;
 
 namespace WinGuardian.Tray;
@@ -12,9 +12,10 @@ internal sealed class DashboardForm : Form
     private readonly ListView _quarantine;
     private readonly ListView _trusted;
     private readonly TabControl _tabs;
+    private readonly FirewallPanel _firewall = new();
     private bool _refreshQueued;
 
-    public DashboardForm()
+    public DashboardForm(string? initialTab = null)
     {
         Text = "WinGuardian";
         Width = 1200;
@@ -68,13 +69,20 @@ internal sealed class DashboardForm : Form
         _tabs.TabPages.Add(MakeTab("Events", _events));
         _tabs.TabPages.Add(MakeTab("Quarantine", _quarantine, quarantineButtons));
         _tabs.TabPages.Add(MakeTab("Trusted Items", _trusted, trustedButtons));
+        _tabs.TabPages.Add(MakeTab("Firewall", _firewall));
         _tabs.SelectedIndexChanged += async (_, _) => await RefreshCurrentTabAsync();
 
         Controls.Add(_tabs);
         Controls.Add(toolbar);
         Controls.Add(_statusLabel);
 
-        Shown += async (_, _) => await RefreshAllAsync();
+        Shown += async (_, _) =>
+        {
+            if (initialTab is not null &&
+                _tabs.TabPages.Cast<TabPage>().FirstOrDefault(p => p.Text.Equals(initialTab, StringComparison.OrdinalIgnoreCase)) is { } page)
+                _tabs.SelectedTab = page;
+            await RefreshAllAsync();
+        };
     }
 
     // ------------------------------------------------------------------ status
@@ -137,6 +145,7 @@ internal sealed class DashboardForm : Form
     {
         1 => RefreshQuarantineAsync(),
         2 => RefreshTrustedAsync(),
+        3 => _firewall.RefreshAsync(),
         _ => RefreshEventsAsync(),
     };
 
@@ -208,11 +217,20 @@ internal sealed class DashboardForm : Form
             trustHash.Visible = single && e.Sha256 is not null;
             var behavior = e.Category == EventCategory.Process && e.Change == ChangeKind.Detected;
             trustFile.Visible = trustFolder.Visible = single && fileEvent && !behavior;
-            trustItem.Visible = single && e.TrustKey is not null && (behavior || e.Category is EventCategory.Service or EventCategory.Persistence);
+            trustItem.Visible = single && e.TrustKey is not null &&
+                                (behavior || e.Category is EventCategory.Service or EventCategory.Persistence or EventCategory.ScheduledTask or EventCategory.Network);
             trustItem.Text = behavior ? "Trust This Behavior From This Parent Program"
-                : e.Category == EventCategory.Service ? "Trust This Service" : "Trust This Autostart Entry";
+                : e.Category switch
+                {
+                    EventCategory.Service => "Trust This Service",
+                    EventCategory.ScheduledTask => "Trust This Scheduled Task",
+                    EventCategory.Network when e.TrustKey!.StartsWith("Listener|") => "Trust This Program Listening on This Port",
+                    EventCategory.Network => "Trust This Firewall Rule",
+                    _ => "Trust This Autostart Entry",
+                };
             trustPublisher.Visible = single && e.Signer is not null && !behavior &&
-                                     e.Category is EventCategory.File or EventCategory.Process or EventCategory.Service or EventCategory.Persistence;
+                                     e.Category is EventCategory.File or EventCategory.Process or EventCategory.Service or EventCategory.Persistence
+                                         or EventCategory.ScheduledTask or EventCategory.Network;
             trustPublisher.Text = $"Trust Everything Signed by \"{e.Signer}\"";
             quarantine.Visible = single && e.FilePath is not null && e.Category != EventCategory.Tamper && e.Change != ChangeKind.Removed;
             lookup.Visible = single && (e.Sha256 is not null || e.FilePath is not null) && e.Category != EventCategory.Tamper;

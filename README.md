@@ -36,6 +36,7 @@ quarantine or trust what it finds.
 | Suspicious command lines | Rules for download-and-execute PowerShell, encoded commands, certutil/mshta/regsvr32/rundll32 abuse, shadow-copy deletion, Defender tampering, log clearing | Every process start, even for known programs |
 | Services & drivers | `HKLM\SYSTEM\CurrentControlSet\Services` (ImagePath, ServiceDll, start type, account) | Every 30s |
 | Scheduled tasks | Full task + COM handler investigation (see below) | Real time + every 30s |
+| Ports & firewall | New listening ports per program, firewall rule changes, firewall switched off | Every 5s |
 | Persistence | Run/RunOnce (machine + every logged-on user), startup folders, WMI event subscriptions, Winlogon, AppInit/AppCert DLLs, LSA packages, BootExecute, IFEO debuggers, SilentProcessExit, Active Setup | Every 30s |
 | Known malware | SHA-256 lookups on **MalwareBazaar** and **VirusTotal** for new/changed executables, new processes, and the binaries behind new services/persistence entries | Queued, cached, rate limited |
 | Tampering with WinGuardian | Service stopped or killed while Windows was running; program files changed; its own service config changed; another process grabbing its pipe | Startup + real time |
@@ -100,6 +101,34 @@ the service, only when you opt in.
 
 **Limitations.** Per-user COM overrides are only visible for users whose registry hive is loaded (logged on).
 Tasks hidden by tampering with the registry `TaskCache` (without a file in `System32\Tasks`) are not covered.
+
+## Firewall tab (ports, connections, firewall)
+
+Dashboard → **Firewall** shows, refreshed every 5 seconds:
+
+- **Listening Ports** — every TCP/UDP (IPv4/IPv6) port open for incoming traffic: address, port, program, PID,
+  the Windows **services** hosted in that process (e.g. `RpcSs` inside `svchost.exe`), signature, path and when
+  WinGuardian first saw that program listen there.
+- **Active Connections** — every TCP connection with local/remote endpoints, state, program, services, signature.
+- **Connection History (24h)** — which program talked to which remote address/port, first/last seen and how
+  often (sampled every 5 s, so it also captures connections that are gone by the time you look).
+- **Firewall Rules** — every Windows Defender Firewall rule (local and Group Policy) with readable names,
+  direction, action, ports, program/service and profiles.
+
+Filter box, sortable columns, colour coding (yellow = unsigned program, red = unsigned program in a
+user-writable folder), and right-click: copy, show only this program, open file location, look up the hash.
+
+**Alerts**
+- A program starts **listening on a new port**: Info if Microsoft-signed, Low for other signed programs, Medium
+  if unsigned, High if unsigned and running from a user folder; one step lower if only reachable from this PC
+  (loopback). Ports in Windows' dynamic range (49152+) are tracked per program, so random high ports don't spam.
+- **Firewall rules added, changed or removed** — a new rule that lets other computers connect in is Medium
+  (Info/Low for Microsoft/validly signed programs, High for an unsigned program in a user folder).
+- **Firewall turned off** for any profile, or the firewall service stopped — High (Tamper).
+
+Data comes from the kernel's TCP/UDP tables (`GetExtendedTcpTable`/`GetExtendedUdpTable`), the Service Control
+Manager, and the firewall's registry store — no packet capture, so the overhead is negligible. Very short-lived
+connections (under ~5 s) can be missed by sampling.
 
 ## Signature-aware scoring
 

@@ -1,4 +1,4 @@
-﻿namespace WinGuardian.Core.Configuration;
+namespace WinGuardian.Core.Configuration;
 
 /// <summary>Bound from the "Guardian" section of the service's appsettings.json.</summary>
 public sealed class GuardianOptions
@@ -23,6 +23,9 @@ public sealed class GuardianOptions
     public int ProcessPollSeconds { get; set; } = 5;
     public int ServicePollSeconds { get; set; } = 30;
     public int PersistencePollSeconds { get; set; } = 30;
+
+    /// <summary>How often ports, connections and firewall settings are checked (also feeds connection history).</summary>
+    public int NetworkPollSeconds { get; set; } = 5;
     public int FullScanIntervalHours { get; set; } = 24;
 
     /// <summary>Where Task Scheduler stores task definitions (watched by the scheduled-task analyzer).</summary>

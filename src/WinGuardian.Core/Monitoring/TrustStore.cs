@@ -1,4 +1,4 @@
-﻿using WinGuardian.Core.Data;
+using WinGuardian.Core.Data;
 
 namespace WinGuardian.Core.Monitoring;
 
@@ -30,14 +30,14 @@ public sealed class TrustStore(GuardianDatabase db)
 
         // Signer is only set when the signature is valid, so a tampered or forged file never matches.
         if (e.Signer is not null && s.Publishers.Contains(e.Signer) &&
-            e.Category is EventCategory.File or EventCategory.Process or EventCategory.Service or EventCategory.Persistence or EventCategory.ScheduledTask)
+            e.Category is EventCategory.File or EventCategory.Process or EventCategory.Service or EventCategory.Persistence or EventCategory.ScheduledTask or EventCategory.Network)
             return true;
 
         return e.Category switch
         {
             EventCategory.File or EventCategory.Process => e.FilePath is not null && IsTrustedPath(s, e.FilePath),
             EventCategory.Service => e.TrustKey is not null && s.Services.Contains(e.TrustKey),
-            EventCategory.Persistence or EventCategory.ScheduledTask => e.TrustKey is not null && s.Persistence.Contains(e.TrustKey),
+            EventCategory.Persistence or EventCategory.ScheduledTask or EventCategory.Network => e.TrustKey is not null && s.Persistence.Contains(e.TrustKey),
             _ => false,
         };
     }
