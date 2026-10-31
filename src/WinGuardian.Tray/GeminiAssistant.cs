@@ -55,7 +55,8 @@ internal static class GeminiAssistant
     /// <summary>Runs one prompt and streams the answer to <paramref name="onOutput"/> as it arrives.</summary>
     public static async Task<Result> AskAsync(string cli, string prompt, Action<string> onOutput, CancellationToken ct)
     {
-        var workspace = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "WinGaurdian-gemini", Guid.NewGuid().ToString("N"))).FullName;
+        SweepStaleWorkspaces();
+        var workspace = Directory.CreateDirectory(Path.Combine(WorkspaceRoot, Guid.NewGuid().ToString("N"))).FullName;
         var psi = new ProcessStartInfo(cli)
         {
             WorkingDirectory = workspace,
@@ -94,7 +95,34 @@ internal static class GeminiAssistant
         }
         finally
         {
-            try { Directory.Delete(workspace, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            // The CLI can hold its working folder for a moment after exiting; retry in the background.
+            _ = Task.Run(async () =>
+            {
+                for (var attempt = 0; attempt < 10 && Directory.Exists(workspace); attempt++)
+                {
+                    try { Directory.Delete(workspace, recursive: true); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await Task.Delay(1000); }
+                }
+            });
+        }
+    }
+
+    private static string WorkspaceRoot => Path.Combine(Path.GetTempPath(), "WinGaurdian-gemini");
+
+    /// <summary>Removes work folders left behind by earlier runs (e.g. if the app was closed mid-answer).</summary>
+    private static void SweepStaleWorkspaces()
+    {
+        if (!Directory.Exists(WorkspaceRoot)) return;
+        foreach (var dir in Directory.EnumerateDirectories(WorkspaceRoot))
+        {
+            try
+            {
+                if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) > TimeSpan.FromMinutes(10))
+                    Directory.Delete(dir, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
         }
     }
 }
