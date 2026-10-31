@@ -1,9 +1,11 @@
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Reflection;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
 using WinGuardian.Core;
+using WinGuardian.Core.Analysis;
 using WinGuardian.Core.Data;
 using WinGuardian.Core.Ipc;
 using WinGuardian.Core.Monitoring;
@@ -23,6 +25,7 @@ public sealed class PipeServer(
     ReputationService reputation,
     NetworkMonitor network,
     ExecutionBlocker blocker,
+    ProgramAnalyzer analyzer,
     ILogger<PipeServer> logger) : BackgroundService
 {
     private static readonly string Version =
@@ -124,9 +127,10 @@ public sealed class PipeServer(
                 {
                     var request = JsonSerializer.Deserialize<PipeRequest>(line, PipeProtocol.Json)
                                   ?? throw new JsonException("empty request");
-                    response = PipeProtocol.Commands.RequiresAdmin(request.Command) && !IsElevatedAdmin(pipe)
+                    var client = DescribeClient(pipe);
+                    response = PipeProtocol.Commands.RequiresAdmin(request.Command) && !client.IsAdmin
                         ? new PipeResponse { AccessDenied = true, Error = "This action requires administrator rights." }
-                        : await Task.Run(() => Dispatch(request), timeout.Token);
+                        : await Task.Run(() => Dispatch(request, client), timeout.Token);
                 }
                 catch (JsonException ex)
                 {
@@ -147,32 +151,94 @@ public sealed class PipeServer(
         }
     }
 
-    /// <summary>
-    /// Impersonates the client to inspect its token. A non-elevated admin under UAC has the
-    /// Administrators group disabled, so this is only true for elevated callers (or SYSTEM).
-    /// </summary>
-    private static bool IsElevatedAdmin(NamedPipeServerStream pipe)
+    /// <summary>Who is on the other end of the pipe.</summary>
+    /// <param name="IsAdmin">
+    /// Elevated administrator or SYSTEM. A non-elevated admin under UAC has the Administrators group
+    /// disabled, so this is only true for elevated callers.
+    /// </param>
+    private sealed record PipeClientInfo(int ProcessId, string? Sid, bool IsAdmin);
+
+    /// <summary>Impersonates the client to inspect its token, and asks Windows for its process id.</summary>
+    private static PipeClientInfo DescribeClient(NamedPipeServerStream pipe)
     {
-        var result = false;
+        string? sid = null;
+        var admin = false;
         try
         {
             pipe.RunAsClient(() =>
             {
                 using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
-                result = identity.IsSystem || new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+                sid = identity.User?.Value;
+                admin = identity.IsSystem || new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
             });
         }
         catch
         {
-            result = false;
+            sid = null;
+            admin = false;
         }
-        return result;
+        var pid = GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var clientPid) ? (int)clientPid : 0;
+        return new PipeClientInfo(pid, sid, admin);
     }
 
-    private PipeResponse Dispatch(PipeRequest request)
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint clientProcessId);
+
+    private PipeResponse Dispatch(PipeRequest request, PipeClientInfo client)
     {
         switch (request.Command)
         {
+            case PipeProtocol.Commands.AnalysisStart:
+            {
+                if (request.Pid is not { } pid || client.ProcessId == 0) return PipeResponse.Fail("No process given.");
+                try
+                {
+                    var id = analyzer.Start(pid, client.ProcessId, client.Sid);
+                    return new PipeResponse { Ok = true, Message = id };
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return PipeResponse.Fail(ex.Message);
+                }
+            }
+
+            case PipeProtocol.Commands.ScanFile:
+            {
+                var sha256 = request.Sha256?.Trim().ToUpperInvariant();
+                if (sha256 is null || sha256.Length != 64 || !sha256.All(Uri.IsHexDigit))
+                    return PipeResponse.Fail("A valid SHA-256 hash is required.");
+                // The client's pipe timeout is 60 s; a VirusTotal rate-limit wait can be longer, so give up first.
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(50));
+                FileScanResult scan;
+                try
+                {
+                    scan = reputation.ScanAsync(sha256, request.Path, timeout.Token).GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    return PipeResponse.Fail("The online lookup took too long (rate limit). Try again in a minute.");
+                }
+                scan.Blocked = blocker.List().Any(b => string.Equals(b.Sha256, sha256, StringComparison.OrdinalIgnoreCase) ||
+                                                       (request.Path is not null && string.Equals(b.Path, request.Path, StringComparison.OrdinalIgnoreCase)));
+                return new PipeResponse { Ok = true, FileScan = scan };
+            }
+
+            case PipeProtocol.Commands.AnalysisReport:
+            {
+                if (request.Id is null) return PipeResponse.Fail("No analysis id given.");
+                return analyzer.GetReport(request.Id, request.IncludeReads, client.Sid, client.IsAdmin) is { } report
+                    ? new PipeResponse { Ok = true, Analysis = report }
+                    : PipeResponse.Fail("That analysis no longer exists (results are kept for a few hours, or until the service restarts).");
+            }
+
+            case PipeProtocol.Commands.AnalysisStop:
+            {
+                if (request.Id is null) return PipeResponse.Fail("No analysis id given.");
+                return analyzer.Stop(request.Id, request.Terminate, client.Sid, client.IsAdmin) is { } message
+                    ? PipeResponse.Success(message)
+                    : PipeResponse.Fail("That analysis no longer exists.");
+            }
+
             case PipeProtocol.Commands.Status:
                 return new PipeResponse { Ok = true, Status = BuildStatus() };
 

@@ -25,13 +25,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open Dashboard", null, (_, _) => ShowDashboard());
+        menu.Items.Add("Run a Program and Monitor It...", null, (_, _) => ShowDashboard(DashboardForm.ProgramMonitorTab));
         menu.Items.Add("Run Full Scan Now", null, async (_, _) => await ServiceCommands.SendAsync(PipeProtocol.Commands.Scan));
         menu.Items.Add("Acknowledge All Alerts", null, async (_, _) => await ServiceCommands.SendAsync(PipeProtocol.Commands.Acknowledge));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings...", null, (_, _) => ServiceCommands.OpenSettings());
         menu.Items.Add("Rebuild Baseline...", null, async (_, _) => await ConfirmRebuildAsync(null));
         menu.Items.Add(new ToolStripSeparator());
+        var darkTheme = new ToolStripMenuItem("Dark Theme") { Checked = Theme.IsDark };
+        darkTheme.Click += (_, _) => ToggleTheme();
+        var fullMenu = new ToolStripMenuItem("Full Right-Click Menu in Explorer");
+        fullMenu.Click += (_, _) => ToggleFullMenu();
+        menu.Opening += (_, _) => fullMenu.Checked = ShellIntegration.FullMenuEnabled;
+        menu.Items.Add(darkTheme);
+        menu.Items.Add(fullMenu);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit Tray Icon", null, (_, _) => ExitThread());
+        Theme.StyleMenu(menu);
 
         _notifyIcon = new NotifyIcon
         {
@@ -47,6 +57,34 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _pollTimer.Tick += async (_, _) => await PollAsync();
         _pollTimer.Start();
         _ = PollAsync();
+    }
+
+    /// <summary>Set when the tray should start again after exiting (theme change).</summary>
+    public static bool RestartRequested { get; private set; }
+
+    private void ToggleTheme()
+    {
+        var dark = !Theme.IsDark;
+        if (MessageBox.Show($"Switch WinGaurdian to the {(dark ? "dark" : "light")} theme?\n\nThe tray icon restarts and open WinGaurdian windows close.",
+                "WinGaurdian - Theme", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            return;
+        Theme.SaveDarkSetting(dark);
+        RestartRequested = true;
+        ExitThread();
+    }
+
+    private static void ToggleFullMenu()
+    {
+        var enable = !ShellIntegration.FullMenuEnabled;
+        if (MessageBox.Show(
+                (enable
+                    ? "Show Windows' full right-click menu straight away (including Scan with WG and Run Through WG), instead of the short Windows 11 menu with \"Show more options\"?"
+                    : "Go back to the short Windows 11 right-click menu (the full one stays under \"Show more options\")?") +
+                "\n\nThis applies to your account only. File Explorer restarts to apply it: open folder windows close and the taskbar reloads for a moment.",
+                "WinGaurdian - Right-click menu", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            return;
+        ShellIntegration.SetFullMenu(enable);
+        ShellIntegration.RestartExplorer();
     }
 
     internal static async Task ConfirmRebuildAsync(IWin32Window? owner)
@@ -162,12 +200,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
             top.Severity >= Severity.High ? ToolTipIcon.Error : ToolTipIcon.Warning);
     }
 
-    private void ShowDashboard()
+    private void ShowDashboard(string? tab = null)
     {
         if (_dashboard is null || _dashboard.IsDisposed)
         {
-            _dashboard = new DashboardForm();
+            _dashboard = new DashboardForm(tab);
             _dashboard.FormClosed += (_, _) => _dashboard = null;
+        }
+        else if (tab is not null)
+        {
+            _dashboard.SelectTab(tab);
         }
         _dashboard.Show();
         _dashboard.WindowState = FormWindowState.Normal;

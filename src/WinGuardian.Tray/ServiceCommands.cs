@@ -102,7 +102,7 @@ internal static class ServiceCommands
     public static PipeRequest? Decode(string encoded) =>
         JsonSerializer.Deserialize<PipeRequest>(Encoding.UTF8.GetString(Convert.FromBase64String(encoded)), PipeProtocol.Json);
 
-    private static void RelaunchElevated(string arguments)
+    internal static void RelaunchElevated(string arguments)
     {
         try
         {

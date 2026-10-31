@@ -15,4 +15,8 @@
     <PackageReference Include="System.Management" Version="10.0.14" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinGuardian.Tests" />
+  </ItemGroup>
+
 </Project>

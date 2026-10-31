@@ -14,10 +14,15 @@ internal sealed class DashboardForm : Form
     private readonly ListView _trusted;
     private readonly TabControl _tabs;
     private readonly FirewallPanel _firewall = new();
+    private readonly ProgramMonitorPanel _programMonitor = new();
     private readonly ListView _blocked;
     private bool _refreshQueued;
 
-    public DashboardForm(string? initialTab = null)
+    public const string ProgramMonitorTab = "Program Monitor";
+
+    /// <param name="analyze">Program to pre-fill in the Program Monitor tab.</param>
+    /// <param name="autoRun">Start running it straight away (after the usual confirmation), e.g. from Explorer's "Run Through WG".</param>
+    public DashboardForm(string? initialTab = null, (string Path, string Arguments)? analyze = null, bool autoRun = false)
     {
         Text = "WinGaurdian";
         Width = 1200;
@@ -30,11 +35,12 @@ internal sealed class DashboardForm : Form
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(6, 4, 6, 4) };
         toolbar.Controls.Add(MakeButton("Refresh", RefreshAllAsync));
-        toolbar.Controls.Add(MakeButton("Run Full Scan", async () =>
+        var scanButton = MakeButton("Run Full Scan", async () =>
         {
             await ServiceCommands.SendAsync(PipeProtocol.Commands.Scan, this);
             await RefreshAllAsync();
-        }));
+        });
+        toolbar.Controls.Add(scanButton);
         toolbar.Controls.Add(MakeButton("Acknowledge All", async () =>
         {
             await ServiceCommands.SendAsync(PipeProtocol.Commands.Acknowledge, this);
@@ -72,12 +78,14 @@ internal sealed class DashboardForm : Form
         trustedButtons.Controls.Add(MakeButton("Remove Trust", RemoveTrustAsync));
         trustedButtons.Controls.Add(MakeButton("Refresh", RefreshTrustedAsync));
 
-        _tabs = new TabControl { Dock = DockStyle.Fill };
+        _tabs = new ThemedTabControl { Dock = DockStyle.Fill };
         _tabs.TabPages.Add(MakeTab("Events", _events));
         _tabs.TabPages.Add(MakeTab("Quarantine", _quarantine, quarantineButtons));
         _tabs.TabPages.Add(MakeTab("Blocked", _blocked, blockedButtons));
         _tabs.TabPages.Add(MakeTab("Trusted Items", _trusted, trustedButtons));
         _tabs.TabPages.Add(MakeTab("Firewall", _firewall));
+        _tabs.TabPages.Add(MakeTab(ProgramMonitorTab, _programMonitor));
+        if (analyze is { } launch) _programMonitor.Prefill(launch.Path, launch.Arguments);
         _tabs.SelectedIndexChanged += async (_, _) => await RefreshCurrentTabAsync();
 
         Controls.Add(_tabs);
@@ -93,15 +101,30 @@ internal sealed class DashboardForm : Form
             Width = 132,
             Padding = new Padding(6),
         });
+        if (Theme.IsDark)
+        {
+            // A raised status card with a thin blue accent along its bottom edge.
+            header.BackColor = Theme.P.Raised;
+            header.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 2, BackColor = Theme.P.Accent });
+            toolbar.Padding = new Padding(6, 8, 6, 4);
+            toolbar.Height = 46;
+        }
         Controls.Add(header);
+        Theme.Primary(scanButton);
+        Theme.Apply(this);
 
         Shown += async (_, _) =>
         {
-            if (initialTab is not null &&
-                _tabs.TabPages.Cast<TabPage>().FirstOrDefault(p => p.Text.Equals(initialTab, StringComparison.OrdinalIgnoreCase)) is { } page)
-                _tabs.SelectedTab = page;
+            if (initialTab is not null) SelectTab(initialTab);
             await RefreshAllAsync();
+            if (autoRun && analyze is not null) await _programMonitor.RunAsync();
         };
+    }
+
+    public void SelectTab(string title)
+    {
+        if (_tabs.TabPages.Cast<TabPage>().FirstOrDefault(p => p.Text.Equals(title, StringComparison.OrdinalIgnoreCase)) is { } page)
+            _tabs.SelectedTab = page;
     }
 
     // ------------------------------------------------------------------ status
@@ -111,7 +134,7 @@ internal sealed class DashboardForm : Form
         string When(DateTime? utc) => utc?.ToLocalTime().ToString("g") ?? "never";
         string OnOff(bool on) => on ? "on" : "off";
         var progress = s.ScanInProgress ? $"  -  {s.ScanFilesProcessed:N0} files processed" : "";
-        _statusLabel.ForeColor = SystemColors.ControlText;
+        _statusLabel.ForeColor = Theme.P.Text;
         _statusLabel.Text =
             $"Service v{s.ServiceVersion}: {s.Phase}{progress}\n" +
             $"Baseline created: {When(s.BaselineCreatedUtc)}    Last full scan: {When(s.LastFullScanUtc)}\n" +
@@ -124,7 +147,7 @@ internal sealed class DashboardForm : Form
 
     public void ApplyDisconnected(string? message = null)
     {
-        _statusLabel.ForeColor = Color.Firebrick;
+        _statusLabel.ForeColor = Theme.P.Danger;
         _statusLabel.Text = message ?? "The WinGaurdian service is not running or cannot be reached.";
     }
 
@@ -166,6 +189,7 @@ internal sealed class DashboardForm : Form
         "Blocked" => RefreshBlockedAsync(),
         "Trusted Items" => RefreshTrustedAsync(),
         "Firewall" => _firewall.RefreshAsync(),
+        ProgramMonitorTab => Task.CompletedTask, // refreshes itself while a program is being monitored
         _ => RefreshEventsAsync(),
     };
 
@@ -196,9 +220,8 @@ internal sealed class DashboardForm : Form
             Tag = e,
             BackColor = e.Severity switch
             {
-                Severity.High => Color.FromArgb(255, 220, 220),
-                Severity.Medium => Color.FromArgb(255, 243, 205),
-                _ => SystemColors.Window,
+                Severity.High or Severity.Medium => Theme.SeverityRow(e.Severity),
+                _ => Theme.P.Surface,
             },
             ForeColor = e.Acknowledged ? SystemColors.GrayText : SystemColors.WindowText,
         });

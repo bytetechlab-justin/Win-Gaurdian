@@ -93,6 +93,39 @@ public sealed class ReputationService
         }
     }
 
+    /// <summary>
+    /// On-demand check of one file ("Scan with WG"): asks every configured provider now (using the cache and
+    /// rate limits) and returns the answers. Detections are also recorded as events, like any other lookup.
+    /// </summary>
+    public async Task<FileScanResult> ScanAsync(string sha256, string? path, CancellationToken ct)
+    {
+        var settings = _db.GetRuntimeSettings();
+        var result = new FileScanResult
+        {
+            Sha256 = sha256,
+            ReputationConfigured = !string.IsNullOrWhiteSpace(settings.MalwareBazaarApiKey) || !string.IsNullOrWhiteSpace(settings.VirusTotalApiKey),
+            Trusted = _trust.IsTrustedFile(path, sha256),
+            PreviouslyQuarantined = _db.GetQuarantine().Any(q => string.Equals(q.Sha256, sha256, StringComparison.OrdinalIgnoreCase)),
+        };
+
+        if (!string.IsNullOrWhiteSpace(settings.MalwareBazaarApiKey))
+            result.Reputation.Add(await LookupAsync(new MalwareBazaarProvider(Http, settings.MalwareBazaarApiKey.Trim()), sha256, ct));
+        if (!string.IsNullOrWhiteSpace(settings.VirusTotalApiKey))
+        {
+            var provider = new VirusTotalProvider(Http, settings.VirusTotalApiKey.Trim(), MaliciousEngineThreshold);
+            var cached = _db.GetCachedReputation(sha256, provider.Name, CacheTtl);
+            if (cached is not null || TryConsumeVirusTotalQuota(settings.VirusTotalDailyLimit))
+                result.Reputation.Add(cached ?? await LookupAsync(provider, sha256, ct));
+            else
+                result.VirusTotalQuotaReached = true;
+        }
+
+        // Detections become events (and are auto-quarantined if enabled); clean results need no event.
+        if (result.Reputation.Any(r => r.Verdict is ReputationVerdict.Malicious or ReputationVerdict.Suspicious))
+            lock (_reportLock) Report(new ReputationRequest(sha256, path, UseVirusTotal: true, Manual: false), result.Reputation, settings);
+        return result;
+    }
+
     private async Task ProcessAsync(ReputationRequest request, CancellationToken ct)
     {
         if (!request.Manual && _trust.IsTrustedFile(request.FilePath, request.Sha256)) return;
@@ -118,10 +151,28 @@ public sealed class ReputationService
                 _logger.LogInformation("VirusTotal daily limit reached; skipping {Hash}", request.Sha256);
         }
 
-        Report(request, results, settings);
+        lock (_reportLock) Report(request, results, settings);
     }
 
+    /// <summary>One lookup at a time: on-demand scans (pipe threads) and the background queue share the rate limits.</summary>
+    private readonly SemaphoreSlim _lookupGate = new(1, 1);
+    private readonly Lock _quotaLock = new();
+    private readonly Lock _reportLock = new();
+
     private async Task<ReputationResult> LookupAsync(IReputationProvider provider, string sha256, CancellationToken ct)
+    {
+        await _lookupGate.WaitAsync(ct);
+        try
+        {
+            return await LookupCoreAsync(provider, sha256, ct);
+        }
+        finally
+        {
+            _lookupGate.Release();
+        }
+    }
+
+    private async Task<ReputationResult> LookupCoreAsync(IReputationProvider provider, string sha256, CancellationToken ct)
     {
         if (_db.GetCachedReputation(sha256, provider.Name, CacheTtl) is { } cached &&
             (cached.Verdict != ReputationVerdict.NotFound || _db.GetCachedReputation(sha256, provider.Name, NotFoundTtl) is not null))
@@ -164,7 +215,10 @@ public sealed class ReputationService
             var malicious = worst == ReputationVerdict.Malicious;
             var label = results.FirstOrDefault(r => r.Verdict == worst)?.Label;
 
-            if (malicious && settings.AutoQuarantineMalicious && request.FilePath is not null && File.Exists(request.FilePath))
+            // The path can come from an unprivileged caller (manual lookups and scans send a hash and a path), so
+            // only quarantine a file whose current content really is the malware: never "this hash, that file".
+            if (malicious && settings.AutoQuarantineMalicious && request.FilePath is not null && File.Exists(request.FilePath) &&
+                string.Equals(FileHasher.TryHash(request.FilePath, long.MaxValue), request.Sha256, StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
@@ -213,6 +267,11 @@ public sealed class ReputationService
 
     /// <summary>Counts VirusTotal requests per UTC day in the meta table.</summary>
     private bool TryConsumeVirusTotalQuota(int dailyLimit)
+    {
+        lock (_quotaLock) return TryConsumeVirusTotalQuotaLocked(dailyLimit);
+    }
+
+    private bool TryConsumeVirusTotalQuotaLocked(int dailyLimit)
     {
         var today = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var parts = (_db.GetMeta(MetaVirusTotalQuota) ?? "").Split('|');

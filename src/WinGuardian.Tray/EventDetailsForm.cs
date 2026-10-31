@@ -51,7 +51,7 @@ internal sealed class EventDetailsForm : Form
             WordWrap = false,
             Font = new Font("Consolas", 9.5f),
             Text = _report.Replace("\n", Environment.NewLine),
-            BackColor = SystemColors.Window,
+            BackColor = Theme.P.Surface,
         };
 
         var tree = new TreeView { Dock = DockStyle.Fill, Font = new Font("Segoe UI", 9f) };
@@ -74,6 +74,7 @@ internal sealed class EventDetailsForm : Form
         Controls.Add(split);
         Controls.Add(buttons);
         CancelButton = close;
+        Theme.Apply(this);
         // A focused TextBox selects all its text by default; start with nothing selected, scrolled to the top.
         Shown += (_, _) => report.Select(0, 0);
     }

@@ -11,8 +11,8 @@ namespace WinGuardian.Tray;
 /// </summary>
 internal sealed class FirewallPanel : UserControl
 {
-    private static readonly Color UnsignedColor = Color.FromArgb(255, 243, 205);
-    private static readonly Color RiskyColor = Color.FromArgb(255, 220, 220);
+    private static Color UnsignedColor => Theme.P.MediumRow;
+    private static Color RiskyColor => Theme.P.HighRow;
 
     private readonly Label _status = new() { Dock = DockStyle.Fill, AutoEllipsis = true, Padding = new Padding(4, 6, 4, 0) };
     private readonly TextBox _filter = new() { Width = 260, PlaceholderText = "Filter (program, port, address, service...)" };
@@ -21,7 +21,7 @@ internal sealed class FirewallPanel : UserControl
     private readonly ListView _connections;
     private readonly ListView _history;
     private readonly ListView _rules;
-    private readonly TabControl _views = new() { Dock = DockStyle.Fill };
+    private readonly ThemedTabControl _views = new() { Dock = DockStyle.Fill };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 5000 };
     private NetworkSnapshot? _snapshot;
     private bool _loading;
@@ -85,7 +85,7 @@ internal sealed class FirewallPanel : UserControl
         }
         catch (Exception ex)
         {
-            _status.ForeColor = Color.Firebrick;
+            _status.ForeColor = Theme.P.Danger;
             _status.Text = "Could not reach the WinGaurdian service: " + ex.Message;
         }
         finally
@@ -100,7 +100,7 @@ internal sealed class FirewallPanel : UserControl
 
         var fw = s.Firewall;
         var off = fw.Profiles.Where(p => !p.Enabled).Select(p => p.Name).ToList();
-        _status.ForeColor = !fw.ServiceRunning || off.Count > 0 ? Color.Firebrick : SystemColors.ControlText;
+        _status.ForeColor = !fw.ServiceRunning || off.Count > 0 ? Theme.P.Danger : Theme.P.Text;
         _status.Text =
             (fw.ServiceRunning ? "Windows Firewall: " + string.Join("  ", fw.Profiles.Select(p => $"{p.Name} {(p.Enabled ? "ON" : "OFF")}"))
                                : "Windows Firewall service is NOT running") +
@@ -144,7 +144,7 @@ internal sealed class FirewallPanel : UserControl
                 Tag = r,
                 ForeColor = r.Enabled ? SystemColors.WindowText : SystemColors.GrayText,
                 BackColor = r.AllowsInbound && r.Program is not null && !r.Program.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase)
-                    ? UnsignedColor : SystemColors.Window,
+                    ? UnsignedColor : Theme.P.Surface,
             }, r => r.Key);
     }
 
@@ -155,24 +155,8 @@ internal sealed class FirewallPanel : UserControl
         return item;
     }
 
-    /// <summary>Refills a list while keeping the user's selection and scroll position.</summary>
-    private static void Fill<T>(ListView list, IEnumerable<T> rows, Func<T, ListViewItem> toItem, Func<T, string> keyOf)
-    {
-        var selected = list.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<T>().Select(keyOf).ToHashSet();
-        var topIndex = list.TopItem?.Index ?? 0;
-
-        list.BeginUpdate();
-        list.Items.Clear();
-        foreach (var row in rows)
-        {
-            var item = toItem(row);
-            item.Selected = selected.Contains(keyOf(row));
-            list.Items.Add(item);
-        }
-        list.Sort();
-        if (list.Items.Count > 0) list.TopItem = list.Items[Math.Min(topIndex, list.Items.Count - 1)];
-        list.EndUpdate();
-    }
+    private static void Fill<T>(ListView list, IEnumerable<T> rows, Func<T, ListViewItem> toItem, Func<T, string> keyOf) =>
+        ListViews.Fill(list, rows, toItem, keyOf);
 
     // ------------------------------------------------------------------ menus
 
@@ -273,15 +257,9 @@ internal sealed class FirewallPanel : UserControl
             string.Join("\n\n----------\n\n", reports) + context);
     }
 
-    private static void CopySelected(ListView list)
-    {
-        var lines = list.SelectedItems.Cast<ListViewItem>()
-            .Select(i => string.Join("\t", i.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(s => s.Text)));
-        var text = string.Join(Environment.NewLine, lines);
-        if (text.Length > 0) Clipboard.SetText(text);
-    }
+    private static void CopySelected(ListView list) => ListViews.CopySelected(list);
 
-    private static void OpenLocation(string path)
+    internal static void OpenLocation(string path)
     {
         if (File.Exists(path))
             Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
@@ -299,36 +277,5 @@ internal sealed class FirewallPanel : UserControl
         return page;
     }
 
-    private static ListView MakeList(params (string Title, int Width)[] columns)
-    {
-        var list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true, HideSelection = false };
-        foreach (var (title, width) in columns) list.Columns.Add(title, width);
-        var sorter = new ColumnSorter();
-        list.ListViewItemSorter = sorter;
-        list.ColumnClick += (_, e) =>
-        {
-            sorter.Descending = sorter.Column == e.Column && !sorter.Descending;
-            sorter.Column = e.Column;
-            list.Sort();
-        };
-        return list;
-    }
-
-    /// <summary>Sorts by the clicked column, numerically when both values are numbers.</summary>
-    private sealed class ColumnSorter : System.Collections.IComparer
-    {
-        public int Column { get; set; } = -1;
-        public bool Descending { get; set; }
-
-        public int Compare(object? x, object? y)
-        {
-            if (Column < 0 || x is not ListViewItem a || y is not ListViewItem b) return 0;
-            var sa = Column < a.SubItems.Count ? a.SubItems[Column].Text : "";
-            var sb = Column < b.SubItems.Count ? b.SubItems[Column].Text : "";
-            var result = long.TryParse(sa, out var na) && long.TryParse(sb, out var nb)
-                ? na.CompareTo(nb)
-                : string.Compare(sa, sb, StringComparison.OrdinalIgnoreCase);
-            return Descending ? -result : result;
-        }
-    }
+    private static ListView MakeList(params (string Title, int Width)[] columns) => ListViews.MakeSortable(columns);
 }

@@ -48,6 +48,7 @@ builder.Services.AddSingleton<ProcessHistory>();
 builder.Services.AddSingleton<ITaskAttributor, TaskAttributor>();
 builder.Services.AddSingleton<ScheduledTaskMonitor>();
 builder.Services.AddSingleton<NetworkMonitor>();
+builder.Services.AddSingleton<WinGuardian.Core.Analysis.ProgramAnalyzer>();
 builder.Services.AddSingleton<FileWatcherService>();
 
 builder.Services.AddHostedService<MonitorWorker>();

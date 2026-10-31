@@ -30,7 +30,7 @@ internal sealed class AskGeminiForm : Form
             Dock = DockStyle.Top,
             Height = 34,
             Padding = new Padding(8, 4, 8, 0),
-            ForeColor = SystemColors.GrayText,
+            ForeColor = Theme.P.MutedText,
             Text = "This text is sent to Google Gemini through your Gemini CLI (agy), using your account. Gemini runs in plan mode: " +
                    "it can answer, but cannot change files or run commands. You can edit the question and ask again.",
         };
@@ -48,7 +48,7 @@ internal sealed class AskGeminiForm : Form
             Multiline = true,
             ReadOnly = true,
             ScrollBars = ScrollBars.Vertical,
-            BackColor = SystemColors.Window,
+            BackColor = Theme.P.Surface,
             Font = new Font("Segoe UI", 10f),
         };
 
@@ -74,6 +74,8 @@ internal sealed class AskGeminiForm : Form
         CancelButton = close;
 
         _clock.Tick += (_, _) => { if (_elapsed is not null) _status.Text = $"Waiting for Gemini... {(int)_elapsed.Elapsed.TotalSeconds}s"; };
+        Theme.Primary(_ask);
+        Theme.Apply(this);
         Shown += async (_, _) => await AskAsync();
         FormClosing += (_, _) => _running?.Cancel();
     }

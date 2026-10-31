@@ -40,7 +40,7 @@ internal sealed class SettingsForm : Form
         Row("MalwareBazaar API key:", _malwareBazaarKey);
         Row("", new LinkLabel { Text = "Get a free key at auth.abuse.ch", AutoSize = true, Tag = "https://auth.abuse.ch/" });
         Row("VirusTotal API key:", _virusTotalKey);
-        Row("", new LinkLabel { Text = "Get a free key at virustotal.com (account â†’ API key)", AutoSize = true, Tag = "https://www.virustotal.com/gui/my-apikey" });
+        Row("", new LinkLabel { Text = "Get a free key at virustotal.com (account > API key)", AutoSize = true, Tag = "https://www.virustotal.com/gui/my-apikey" });
         Row("VirusTotal lookups per day:", _virusTotalLimit);
         Row("Keep acknowledged events (days):", _retentionDays);
         Row("", _autoQuarantine);
@@ -63,6 +63,8 @@ internal sealed class SettingsForm : Form
 
         Controls.Add(layout);
         AcceptButton = save;
+        Theme.Primary(save);
+        Theme.Apply(this);
         CancelButton = cancel;
         Shown += async (_, _) => await LoadAsync();
     }

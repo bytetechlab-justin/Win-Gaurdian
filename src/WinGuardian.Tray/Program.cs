@@ -8,6 +8,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        Theme.Initialize();
 
         // Modes used when the tray relaunches itself elevated (UAC) for an admin-only action.
         if (args.Length == 2 && args[0] == "--request")
@@ -29,6 +30,24 @@ internal static class Program
             Application.Run(new DashboardForm(args.Length > 1 ? args[1] : null));
             return 0;
         }
+        if (args.Length == 2 && args[0] == "--analyze")
+        {
+            // Reopened as administrator to run and monitor a program that needs administrator rights.
+            if (ProgramMonitorPanel.DecodeLaunch(args[1]) is not { } launch) return 1;
+            Application.Run(new DashboardForm(DashboardForm.ProgramMonitorTab, launch, autoRun: true));
+            return 0;
+        }
+        // Explorer right-click menu ("Scan with WG" / "Run Through WG"); Explorer passes the file as "%1".
+        if (args.Length == 2 && args[0] == "--scan")
+        {
+            Application.Run(new ScanFileForm(Path.GetFullPath(args[1])));
+            return 0;
+        }
+        if (args.Length == 2 && args[0] == "--run")
+        {
+            Application.Run(new DashboardForm(DashboardForm.ProgramMonitorTab, (Path.GetFullPath(args[1]), ""), autoRun: true));
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--settings")
         {
             using var form = new SettingsForm();
@@ -36,10 +55,15 @@ internal static class Program
             return 0;
         }
 
-        using var mutex = new Mutex(true, @"Local\WinGuardian.Tray", out var isFirstInstance);
-        if (!isFirstInstance) return 0;
+        using (var mutex = new Mutex(true, @"Local\WinGuardian.Tray", out var isFirstInstance))
+        {
+            if (!isFirstInstance) return 0;
+            Application.Run(new TrayApplicationContext());
+        }
 
-        Application.Run(new TrayApplicationContext());
+        // Theme changed: start again (after releasing the single-instance mutex) so every window uses it.
+        if (TrayApplicationContext.RestartRequested)
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false })?.Dispose();
         return 0;
     }
 

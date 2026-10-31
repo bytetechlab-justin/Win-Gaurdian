@@ -15,6 +15,15 @@ $serviceName = 'WinGuardian'
 Get-Process -Name 'WinGuardian.Tray' -ErrorAction SilentlyContinue | Stop-Process -Force
 Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'WinGuardianTray' -ErrorAction SilentlyContinue
 
+# Explorer right-click menu entries (see install.ps1).
+$classes = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Classes', $true)
+try {
+    $classes.DeleteSubKeyTree('*\shell\WinGuardian.Scan', $false)
+    foreach ($ext in '.exe', '.com', '.scr', '.bat', '.cmd', '.ps1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.msi', '.hta') {
+        $classes.DeleteSubKeyTree("SystemFileAssociations\$ext\shell\WinGuardian.Run", $false)
+    }
+} finally { $classes.Close() }
+
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
     Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
     sc.exe delete $serviceName | Out-Null

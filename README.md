@@ -203,6 +203,76 @@ Open **Settings…** from the tray menu (UAC prompt) and enter either or both ke
 Optionally enable **auto-quarantine** of files confirmed as known malware.
 Keys are stored in the protected database, never in `appsettings.json`.
 
+## Explorer right-click menu
+
+`install.ps1` adds two entries to the right-click menu of files in Explorer. On Windows 11 they are under
+**Show more options** (or Shift+F10), because Windows 11's compact menu only lists packaged apps.
+
+- **Scan with WG** (every file) opens a scan window. It shows the file's size, real content type, SHA-256,
+  digital signature and where it was downloaded from (the Mark of the Web). It warns about tricks such as a
+  program disguised as a document (`invoice.pdf` that is really an `.exe`), double extensions (`photo.jpg.exe`)
+  and hidden right-to-left characters in the name. It also says if the file is on the Blocked or Trusted list
+  or was quarantined before. With an API key configured, it checks the hash against MalwareBazaar and
+  VirusTotal and waits for the answer. Then it gives a verdict and offers *Run Through WG*, *Block*,
+  *Quarantine*, *Open in VirusTotal*, *Ask Gemini* and *Copy Report*. The file is read by the scan window,
+  running as you; only its hash and path go to the service. Detections are also recorded as events.
+- **Run Through WG** (programs, scripts and installers: `.exe .com .scr .bat .cmd .ps1 .vbs .vbe .js .jse .wsf
+  .msi .hta`) opens the Program Monitor with that file and starts it after the usual warning (see below).
+
+`uninstall.ps1` removes both entries.
+
+**Skip "Show more options":** tray menu → **Full Right-Click Menu in Explorer** turns Windows 11's short menu off
+for your account, so right-clicking shows the full menu (with the WG entries) straight away. It uses Windows'
+per-user switch (an empty `HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32`)
+and restarts File Explorer to apply it. Click it again to go back.
+
+## Look
+
+WinGaurdian uses a **dark theme** by default: dark title bars, scrollbars and menus, raised surfaces, and blue
+for the selected tab, main buttons, selected rows and links. Severity colours (red / amber / blue rows, verdict
+banners) have dark variants. Tray menu → **Dark Theme** switches to the classic light Windows look (per user;
+the tray restarts to apply it). Windows' own message boxes stay light, because Windows doesn't theme them for
+desktop apps.
+
+## Program Monitor tab (run a program and see what it does)
+
+Dashboard → **Program Monitor** (or tray menu → *Run a Program and Monitor It…*, or Explorer → *Run Through WG*): choose a program, script
+(`.bat`, `.cmd`, `.ps1`, `.vbs`, `.js`) or installer (`.msi`), click **Run & Monitor**, and watch everything it
+— and every process it starts — does, live:
+
+- **Findings** — everything rated Medium or High, most serious first, with the reason.
+- **Processes** — every child process with command line, parent, start/exit time, exit code, signature and
+  whether it runs as administrator (gaining admin rights through UAC is flagged).
+- **Files** — created, modified (bytes written), deleted and renamed (with the old name), plus optionally every
+  file it only read.
+- **Registry** — keys created/deleted, values set (with the data written) or deleted, and attempts Windows refused.
+- **Network** — every TCP/UDP connection: host name (from its own DNS lookups), address, port, bytes sent and
+  received, inbound or outbound. **DNS Lookups** — every name it resolved and the answer.
+- **Other Alerts** — WinGaurdian alerts raised elsewhere while it ran. Changes made *indirectly* (through a
+  service, WMI or the Task Scheduler) don't happen inside the monitored processes but are still caught here.
+
+What gets flagged: autostart locations (Run keys, Startup folder, Winlogon, IFEO, services, scheduled tasks,
+Active Setup…), files in the Windows folder, the hosts file, Defender/firewall/UAC policy changes, file-type
+and COM hijacks, proxy and root-certificate changes, reading saved browser passwords/cookies or crypto
+wallets, ransomware-like changes to 25+ of your documents, Windows command-line tools it launches (with
+dangerous command lines rated High), program files it drops, and connections to unusual ports, raw IP
+addresses or services often abused by malware. **Export Report…** saves it as text or JSON; **Ask Gemini…**
+sends the text report for an opinion.
+
+> **This is monitoring, not a sandbox.** The program runs for real with your permissions and its changes are
+> real; WinGaurdian records them but does not block or undo them. Only run programs you would be willing to
+> run anyway, and analyse suspected malware in a virtual machine. Windows 11 Home has no Windows Sandbox or
+> Hyper-V; Sandboxie-Plus is a free way to add isolation.
+
+How it works: the tray starts the program with its first thread suspended, asks the service to record that
+process, then lets it run, so nothing is missed at start-up. The service records it with the kernel's own ETW
+providers (Kernel-File, Kernel-Registry, Kernel-Network, Kernel-Process, DNS-Client); nothing is injected into
+the program. Any user can monitor programs they start themselves. The service only accepts a process whose
+parent is the caller, and only the person who started a run can read its results. Programs that need
+administrator rights are started from a dashboard reopened as administrator (UAC prompt). Results are kept in
+the service's memory for 4 hours, so they're gone after a service restart; export anything you want to keep.
+Up to 4 programs can be monitored at once.
+
 ## Security model
 
 - The service runs as **LocalSystem**; its data folder is restricted to SYSTEM and Administrators.
@@ -294,3 +364,7 @@ API keys, auto-quarantine and event retention are set from the tray's **Settings
 - Per-user autostart entries are only visible while that user is logged on (their registry hive is loaded).
 - A user's first logon after install is baselined silently for that user's registry locations.
 - An administrator can still stop the service; WinGuardian detects and reports this but cannot prevent it.
+- Program Monitor: events from a child process in its first few milliseconds can occasionally be missed
+  (kernel events from different CPUs arrive slightly out of order). Programs that bring their own DNS resolver
+  (DNS over HTTPS) show connections by IP address only. Disk writes Windows performs later on the program's
+  behalf (lazy writes, memory-mapped files) are shown as the file being created/opened rather than written.

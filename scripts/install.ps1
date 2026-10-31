@@ -49,6 +49,22 @@ sc.exe failureflag $serviceName 1 | Out-Null
 Write-Host 'Starting service...'
 Start-Service -Name $serviceName
 
+Write-Host 'Adding "Scan with WG" and "Run Through WG" to the Explorer right-click menu...'
+# Classic shell verbs (HKLM, all users). On Windows 11 they appear under "Show more options" (or Shift+F10).
+# Uses the .NET registry API because PowerShell treats the "*" class name as a wildcard.
+$runExtensions = '.exe', '.com', '.scr', '.bat', '.cmd', '.ps1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.msi', '.hta'
+function Set-ShellVerb([string]$classPath, [string]$verb, [string]$label, [string]$arguments) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey("SOFTWARE\Classes\$classPath\shell\$verb")
+    try {
+        $key.SetValue('MUIVerb', $label)
+        $key.SetValue('Icon', "`"$trayExe`",0")
+        $command = $key.CreateSubKey('command')
+        try { $command.SetValue('', "`"$trayExe`" $arguments `"%1`"") } finally { $command.Close() }
+    } finally { $key.Close() }
+}
+Set-ShellVerb '*' 'WinGuardian.Scan' 'Scan with WG' '--scan'
+foreach ($ext in $runExtensions) { Set-ShellVerb "SystemFileAssociations\$ext" 'WinGuardian.Run' 'Run Through WG' '--run' }
+
 Write-Host 'Registering tray icon to start at logon...'
 Set-ItemProperty -Path $runKey -Name 'WinGuardianTray' -Value "`"$trayExe`""
 

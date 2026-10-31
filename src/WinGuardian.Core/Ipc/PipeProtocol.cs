@@ -30,6 +30,14 @@ public static class PipeProtocol
         public const string Block = "block";
         public const string Unblock = "unblock";
 
+        // Program analysis. Not admin-only: any user may monitor programs they start themselves (checked by the service).
+        public const string AnalysisStart = "analysisStart";
+        public const string AnalysisReport = "analysisReport";
+        public const string AnalysisStop = "analysisStop";
+
+        // "Scan with WG": the tray hashes the file (as the user) and asks for its online reputation. Not admin-only.
+        public const string ScanFile = "scanFile";
+
         public const string Acknowledge = "acknowledge";
         public const string Rebuild = "rebuild";
         public const string Trust = "trust";
@@ -69,6 +77,15 @@ public sealed class PipeRequest
     public TrustKind? TrustKind { get; set; }
     public string? Value { get; set; }
     public RuntimeSettings? Settings { get; set; }
+
+    /// <summary>Program analysis: the process to start monitoring.</summary>
+    public int? Pid { get; set; }
+
+    /// <summary>Program analysis: also return files and registry keys the program only read.</summary>
+    public bool IncludeReads { get; set; }
+
+    /// <summary>Program analysis: end the monitored processes when stopping.</summary>
+    public bool Terminate { get; set; }
 }
 
 public sealed class PipeResponse
@@ -84,6 +101,8 @@ public sealed class PipeResponse
     public RuntimeSettings? Settings { get; set; }
     public Network.NetworkSnapshot? Network { get; set; }
     public List<Monitoring.BlockedItem>? Blocked { get; set; }
+    public Analysis.AnalysisReport? Analysis { get; set; }
+    public Reputation.FileScanResult? FileScan { get; set; }
 
     public static PipeResponse Success(string? message = null) => new() { Ok = true, Message = message };
     public static PipeResponse Fail(string error) => new() { Ok = false, Error = error };
