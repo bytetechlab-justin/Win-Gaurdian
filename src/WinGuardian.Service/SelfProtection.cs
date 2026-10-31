@@ -49,7 +49,7 @@ public sealed class SelfProtection(GuardianDatabase db, EventRecorder events, IL
         var window = $"Protection was off from about {lastHeartbeat.Value.ToLocalTime():g} until {DateTime.Now:g}.";
         if (maintenance)
         {
-            events.Info("WinGuardian restarted for maintenance", window);
+            events.Info("WinGaurdian restarted for maintenance", window);
             return;
         }
 
@@ -60,8 +60,8 @@ public sealed class SelfProtection(GuardianDatabase db, EventRecorder events, IL
             Category = EventCategory.Tamper,
             Change = ChangeKind.Detected,
             Subject = stoppedNormally
-                ? "WinGuardian service was stopped while Windows was running"
-                : "WinGuardian service was terminated unexpectedly (crashed or killed)",
+                ? "WinGaurdian service was stopped while Windows was running"
+                : "WinGaurdian service was terminated unexpectedly (crashed or killed)",
             Details = window + (stoppedNormally
                 ? " Someone with administrator rights stopped the service."
                 : " The process ended without shutting down; check for a crash in the Application event log."),
@@ -83,9 +83,9 @@ public sealed class SelfProtection(GuardianDatabase db, EventRecorder events, IL
         if (diffs.Count == 0) return;
 
         if (maintenance)
-            events.Info("WinGuardian program files updated", $"{diffs.Count} file(s) changed during maintenance.");
+            events.Info("WinGaurdian program files updated", $"{diffs.Count} file(s) changed during maintenance.");
         else
-            RecordTamper("WinGuardian program files changed while the service was not running", diffs);
+            RecordTamper("WinGaurdian program files changed while the service was not running", diffs);
     }
 
     private void StartWatchingInstallFolder()
@@ -122,7 +122,7 @@ public sealed class SelfProtection(GuardianDatabase db, EventRecorder events, IL
             var diffs = Diff(stored, current);
             db.SetMeta(GuardianDatabase.MetaSelfManifest, JsonSerializer.Serialize(current));
             if (diffs.Count > 0)
-                RecordTamper("WinGuardian program files were modified while it was running", diffs);
+                RecordTamper("WinGaurdian program files were modified while it was running", diffs);
         }
         catch (Exception ex)
         {

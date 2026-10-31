@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using WinGuardian.Core.Data;
 
@@ -122,7 +122,7 @@ public sealed class ServiceMonitor(GuardianDatabase db, EventRecorder events, IL
         {
             Category = isSelf ? EventCategory.Tamper : EventCategory.Service,
             Change = change,
-            Subject = isSelf ? "WinGuardian's own service configuration changed" : s.Name,
+            Subject = isSelf ? "WinGaurdian's own service configuration changed" : s.Name,
             Details = details,
             FilePath = target,
             Sha256 = change != ChangeKind.Removed && target is not null ? FileHasher.TryHash(target, 256L * 1024 * 1024) : null,

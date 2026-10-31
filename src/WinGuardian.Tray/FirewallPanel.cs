@@ -86,7 +86,7 @@ internal sealed class FirewallPanel : UserControl
         catch (Exception ex)
         {
             _status.ForeColor = Color.Firebrick;
-            _status.Text = "Could not reach the WinGuardian service: " + ex.Message;
+            _status.Text = "Could not reach the WinGaurdian service: " + ex.Message;
         }
         finally
         {
@@ -183,7 +183,8 @@ internal sealed class FirewallPanel : UserControl
         var filterProcess = new ToolStripMenuItem("Show Only This Program");
         var openLocation = new ToolStripMenuItem("Open File Location");
         var lookup = new ToolStripMenuItem("Look Up Program Hash Online");
-        menu.Items.AddRange([copy, filterProcess, new ToolStripSeparator(), openLocation, lookup]);
+        var block = new ToolStripMenuItem("Block Executable...");
+        menu.Items.AddRange([copy, filterProcess, new ToolStripSeparator(), openLocation, lookup, new ToolStripSeparator(), block]);
 
         (string? Path, string Name)? Selected() => list.SelectedItems.Count == 0 ? null : list.SelectedItems[0].Tag switch
         {
@@ -196,7 +197,7 @@ internal sealed class FirewallPanel : UserControl
         {
             var s = Selected();
             if (s is null) { args.Cancel = true; return; }
-            openLocation.Enabled = lookup.Enabled = s.Value.Path is not null;
+            openLocation.Enabled = lookup.Enabled = block.Enabled = s.Value.Path is not null;
         };
         copy.Click += (_, _) => CopySelected(list);
         filterProcess.Click += (_, _) => { if (Selected() is { } s) _filter.Text = s.Name; };
@@ -205,6 +206,11 @@ internal sealed class FirewallPanel : UserControl
         {
             if (Selected()?.Path is { } p)
                 await ServiceCommands.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Lookup, Path = p }, FindForm());
+        };
+        block.Click += async (_, _) =>
+        {
+            if (Selected() is { Path: { } p } s)
+                await ServiceCommands.ConfirmAndBlockAsync(FindForm(), p, $"From the Firewall tab ({s.Name})");
         };
         return menu;
     }

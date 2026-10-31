@@ -35,12 +35,12 @@ internal sealed class EventDetailsForm : Form
         _report = analysis is not null ? TaskAnalysisFormatter.Format(e, analysis) : BasicReport(e);
         _json = e.Analysis is not null ? Reindent(e.Analysis) : JsonSerializer.Serialize(e, Indented);
 
-        Text = $"WinGuardian - Event #{e.Id}";
+        Text = $"WinGaurdian - Event #{e.Id}";
         Width = 900;
         Height = 760;
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 9f);
-        Icon = IconFactory.CreateShield(Color.FromArgb(46, 160, 67));
+        Icon = Branding.AppIcon;
 
         var report = new TextBox
         {
@@ -85,7 +85,7 @@ internal sealed class EventDetailsForm : Form
             var response = await PipeClient.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Event, Id = id.ToString() });
             if (response.Events is not [var e])
             {
-                MessageBox.Show(owner, response.Error ?? "Event not found.", "WinGuardian", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(owner, response.Error ?? "Event not found.", "WinGaurdian", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             using var form = new EventDetailsForm(e);
@@ -93,7 +93,7 @@ internal sealed class EventDetailsForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(owner, "Could not load the event.\n\n" + ex.Message, "WinGuardian", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(owner, "Could not load the event.\n\n" + ex.Message, "WinGaurdian", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 

@@ -26,6 +26,9 @@ public static class PipeProtocol
         public const string Quarantined = "quarantined";
         public const string Event = "event";
         public const string Network = "network";
+        public const string Blocked = "blocked";
+        public const string Block = "block";
+        public const string Unblock = "unblock";
 
         public const string Acknowledge = "acknowledge";
         public const string Rebuild = "rebuild";
@@ -38,7 +41,7 @@ public static class PipeProtocol
         public const string SetSettings = "setSettings";
 
         public static bool RequiresAdmin(string command) => command is
-            Acknowledge or Rebuild or Trust or Untrust or Quarantine or Restore or DeleteQuarantined or GetSettings or SetSettings;
+            Acknowledge or Rebuild or Trust or Untrust or Quarantine or Restore or DeleteQuarantined or GetSettings or SetSettings or Block or Unblock;
     }
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -77,6 +80,7 @@ public sealed class PipeResponse
     public List<QuarantineItem>? Quarantined { get; set; }
     public RuntimeSettings? Settings { get; set; }
     public Network.NetworkSnapshot? Network { get; set; }
+    public List<Monitoring.BlockedItem>? Blocked { get; set; }
 
     public static PipeResponse Success(string? message = null) => new() { Ok = true, Message = message };
     public static PipeResponse Fail(string error) => new() { Ok = false, Error = error };
@@ -104,9 +108,9 @@ public static class PipeClient
         using var reader = new StreamReader(pipe, PipeProtocol.Utf8, leaveOpen: true);
         await writer.WriteLineAsync(JsonSerializer.Serialize(request, PipeProtocol.Json).AsMemory(), timeout.Token);
         var line = await reader.ReadLineAsync(timeout.Token)
-                   ?? throw new IOException("The WinGuardian service closed the connection without replying.");
+                   ?? throw new IOException("The WinGaurdian service closed the connection without replying.");
         return JsonSerializer.Deserialize<PipeResponse>(line, PipeProtocol.Json)
-               ?? throw new IOException("Empty response from the WinGuardian service.");
+               ?? throw new IOException("Empty response from the WinGaurdian service.");
     }
 
     /// <summary>
@@ -116,7 +120,7 @@ public static class PipeClient
     private static void VerifyServer(NamedPipeClientStream pipe)
     {
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out var serverPid))
-            throw new ServerVerificationException("Could not identify the process serving the WinGuardian pipe.");
+            throw new ServerVerificationException("Could not identify the process serving the WinGaurdian pipe.");
 
         var servicePid = ServiceInfo.GetProcessId(GuardianPaths.ServiceName);
         if (servicePid is not null && servicePid == serverPid) return;
@@ -124,7 +128,7 @@ public static class PipeClient
         if (servicePid is null && Environment.GetEnvironmentVariable(AllowUnverifiedVariable) == "1") return;
 
         throw new ServerVerificationException(
-            $"The process answering on the WinGuardian pipe (PID {serverPid}) is not the WinGuardian service " +
+            $"The process answering on the WinGaurdian pipe (PID {serverPid}) is not the WinGaurdian service " +
             $"({(servicePid is null ? "service not running" : $"service PID {servicePid}")}). It may be an impersonation attempt.");
     }
 

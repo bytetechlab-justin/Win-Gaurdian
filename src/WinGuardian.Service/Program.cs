@@ -36,6 +36,7 @@ builder.Services.AddSingleton<PathFilter>();
 builder.Services.AddSingleton<TrustStore>();
 builder.Services.AddSingleton<EventRecorder>();
 builder.Services.AddSingleton<QuarantineManager>();
+builder.Services.AddSingleton<ExecutionBlocker>();
 builder.Services.AddSingleton<ReputationService>();
 builder.Services.AddSingleton<FileMonitor>();
 builder.Services.AddSingleton<ProcessMonitor>();

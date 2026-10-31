@@ -29,7 +29,7 @@ public sealed class QuarantineManager(GuardianDatabase db, TrustStore trust, Eve
     {
         var full = Path.GetFullPath(path);
         if (!File.Exists(full)) throw new FileNotFoundException("The file no longer exists.", full);
-        EnsureAllowed(full);
+        EnsureNotProtected(full);
 
         var killed = KillProcessesRunning(full);
         var sha256 = FileHasher.TryHash(full, long.MaxValue);
@@ -118,7 +118,8 @@ public sealed class QuarantineManager(GuardianDatabase db, TrustStore trust, Eve
         events.Info($"Quarantined file permanently deleted: {item.OriginalPath}", $"SHA256 {item.Sha256}");
     }
 
-    private static void EnsureAllowed(string full)
+    /// <summary>Throws for core Windows files and WinGaurdian's own files, which must never be quarantined or blocked.</summary>
+    internal static void EnsureNotProtected(string full)
     {
         if (CriticalSystemFiles.Contains(Path.GetFileName(full)) &&
             full.StartsWith(GuardianPaths.Normalize("%WINDIR%") + "\\", StringComparison.OrdinalIgnoreCase))
@@ -127,7 +128,7 @@ public sealed class QuarantineManager(GuardianDatabase db, TrustStore trust, Eve
         var installDir = Path.GetDirectoryName(AppContext.BaseDirectory.TrimEnd('\\'))!;
         if (full.StartsWith(installDir + "\\", StringComparison.OrdinalIgnoreCase) ||
             full.StartsWith(GuardianPaths.DataDirectory + "\\", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Refusing to quarantine WinGuardian's own files.");
+            throw new InvalidOperationException("Refusing to quarantine WinGaurdian's own files.");
     }
 
     private int KillProcessesRunning(string path)

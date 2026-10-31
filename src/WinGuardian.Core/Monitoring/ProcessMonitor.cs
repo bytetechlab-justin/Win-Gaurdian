@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using WinGuardian.Core.Configuration;
 using WinGuardian.Core.Data;
@@ -14,6 +14,7 @@ public sealed class ProcessMonitor(
     GuardianDatabase db,
     GuardianOptions options,
     EventRecorder events,
+    ExecutionBlocker blocker,
     ILogger<ProcessMonitor> logger)
 {
     private static readonly TimeSpan RepeatSuppression = TimeSpan.FromMinutes(10);
@@ -76,6 +77,7 @@ public sealed class ProcessMonitor(
     private void Handle(ProcessStart start)
     {
         var p = start.Process;
+        if (blocker.Enforce(start, sha256: null)) return; // blocked by path: terminated, nothing else to report
         CheckCommandLine(start);
 
         lock (_gate)
@@ -84,6 +86,7 @@ public sealed class ProcessMonitor(
         }
 
         var hash = HashOf(p.ImagePath);
+        if (blocker.Enforce(start, hash)) return; // a renamed copy of a blocked file
         using var c = db.Open();
         db.InsertProcess(c, null, p, hash, inBaseline: false);
         var e = new GuardianEvent

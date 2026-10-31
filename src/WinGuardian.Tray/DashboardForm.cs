@@ -1,5 +1,6 @@
 using WinGuardian.Core;
 using WinGuardian.Core.Ipc;
+using WinGuardian.Core.Monitoring;
 
 namespace WinGuardian.Tray;
 
@@ -13,18 +14,19 @@ internal sealed class DashboardForm : Form
     private readonly ListView _trusted;
     private readonly TabControl _tabs;
     private readonly FirewallPanel _firewall = new();
+    private readonly ListView _blocked;
     private bool _refreshQueued;
 
     public DashboardForm(string? initialTab = null)
     {
-        Text = "WinGuardian";
+        Text = "WinGaurdian";
         Width = 1200;
         Height = 700;
         StartPosition = FormStartPosition.CenterScreen;
-        Icon = IconFactory.CreateShield(Color.FromArgb(46, 160, 67));
+        Icon = Branding.AppIcon;
         Font = new Font("Segoe UI", 9f);
 
-        _statusLabel = new Label { Dock = DockStyle.Top, Height = 122, Padding = new Padding(10), Text = "Connecting..." };
+        _statusLabel = new Label { Dock = DockStyle.Fill, Padding = new Padding(10), Text = "Connecting..." };
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(6, 4, 6, 4) };
         toolbar.Controls.Add(MakeButton("Refresh", RefreshAllAsync));
@@ -61,6 +63,11 @@ internal sealed class DashboardForm : Form
         quarantineButtons.Controls.Add(MakeButton("Refresh", RefreshQuarantineAsync));
 
         _trusted = MakeList(("Kind", 90), ("Value", 650), ("Added", 130), ("Note", 300));
+        _blocked = MakeList(("Program", 450), ("Protection", 230), ("Services disabled", 200), ("Blocked", 130), ("Reason", 300), ("SHA256", 450));
+        var blockedButtons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 38, Padding = new Padding(4) };
+        blockedButtons.Controls.Add(MakeButton("Unblock", UnblockSelectedAsync));
+        blockedButtons.Controls.Add(MakeButton("Refresh", RefreshBlockedAsync));
+
         var trustedButtons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 38, Padding = new Padding(4) };
         trustedButtons.Controls.Add(MakeButton("Remove Trust", RemoveTrustAsync));
         trustedButtons.Controls.Add(MakeButton("Refresh", RefreshTrustedAsync));
@@ -68,13 +75,25 @@ internal sealed class DashboardForm : Form
         _tabs = new TabControl { Dock = DockStyle.Fill };
         _tabs.TabPages.Add(MakeTab("Events", _events));
         _tabs.TabPages.Add(MakeTab("Quarantine", _quarantine, quarantineButtons));
+        _tabs.TabPages.Add(MakeTab("Blocked", _blocked, blockedButtons));
         _tabs.TabPages.Add(MakeTab("Trusted Items", _trusted, trustedButtons));
         _tabs.TabPages.Add(MakeTab("Firewall", _firewall));
         _tabs.SelectedIndexChanged += async (_, _) => await RefreshCurrentTabAsync();
 
         Controls.Add(_tabs);
         Controls.Add(toolbar);
-        Controls.Add(_statusLabel);
+        // Header: status on the left, logo in the top-right corner.
+        var header = new Panel { Dock = DockStyle.Top, Height = 128 };
+        header.Controls.Add(_statusLabel);
+        header.Controls.Add(new PictureBox
+        {
+            Image = Branding.Logo,
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Dock = DockStyle.Right,
+            Width = 132,
+            Padding = new Padding(6),
+        });
+        Controls.Add(header);
 
         Shown += async (_, _) =>
         {
@@ -98,7 +117,7 @@ internal sealed class DashboardForm : Form
             $"Baseline created: {When(s.BaselineCreatedUtc)}    Last full scan: {When(s.LastFullScanUtc)}\n" +
             $"Baseline: {s.BaselineFileCount:N0} files, {s.BaselineProcessCount:N0} executables, {s.BaselineServiceCount:N0} services/drivers, {s.BaselinePersistenceCount:N0} autostart entries\n" +
             $"Scheduled tasks analysed: {s.BaselineTaskCount:N0}    Task change attribution (auditing): {OnOff(s.TaskAuditingActive)}\n" +
-            $"Real-time process tracing (ETW): {OnOff(s.EtwProcessTracing)}    MalwareBazaar: {OnOff(s.MalwareBazaarConfigured)}    VirusTotal: {OnOff(s.VirusTotalConfigured)}    Quarantined files: {s.QuarantineCount}\n" +
+            $"Real-time process tracing (ETW): {OnOff(s.EtwProcessTracing)}    MalwareBazaar: {OnOff(s.MalwareBazaarConfigured)}    VirusTotal: {OnOff(s.VirusTotalConfigured)}    Quarantined files: {s.QuarantineCount}    Blocked programs: {s.BlockedCount}\n" +
             $"Unacknowledged alerts: {s.UnacknowledgedCount:N0}" +
             (s.LastError is null ? "" : $"    Last error: {s.LastError}");
     }
@@ -106,7 +125,7 @@ internal sealed class DashboardForm : Form
     public void ApplyDisconnected(string? message = null)
     {
         _statusLabel.ForeColor = Color.Firebrick;
-        _statusLabel.Text = message ?? "The WinGuardian service is not running or cannot be reached.";
+        _statusLabel.Text = message ?? "The WinGaurdian service is not running or cannot be reached.";
     }
 
     /// <summary>Called by the tray when new events arrive; coalesced so bursts trigger one reload.</summary>
@@ -141,11 +160,12 @@ internal sealed class DashboardForm : Form
         await RefreshCurrentTabAsync();
     }
 
-    private Task RefreshCurrentTabAsync() => _tabs.SelectedIndex switch
+    private Task RefreshCurrentTabAsync() => _tabs.SelectedTab?.Text switch
     {
-        1 => RefreshQuarantineAsync(),
-        2 => RefreshTrustedAsync(),
-        3 => _firewall.RefreshAsync(),
+        "Quarantine" => RefreshQuarantineAsync(),
+        "Blocked" => RefreshBlockedAsync(),
+        "Trusted Items" => RefreshTrustedAsync(),
+        "Firewall" => _firewall.RefreshAsync(),
         _ => RefreshEventsAsync(),
     };
 
@@ -198,12 +218,13 @@ internal sealed class DashboardForm : Form
         var trustItem = new ToolStripMenuItem("Trust This Item");
         var trustPublisher = new ToolStripMenuItem("Trust This Publisher");
         var quarantine = new ToolStripMenuItem("Quarantine File...");
+        var block = new ToolStripMenuItem("Block Executable...");
         var lookup = new ToolStripMenuItem("Look Up Hash Online");
         var openVt = new ToolStripMenuItem("Open in VirusTotal (browser)");
         var copy = new ToolStripMenuItem("Copy Details");
 
         menu.Items.AddRange([acknowledge, details, new ToolStripSeparator(), trustFile, trustFolder, trustHash, trustItem, trustPublisher,
-            new ToolStripSeparator(), quarantine, lookup, openVt, new ToolStripSeparator(), copy]);
+            new ToolStripSeparator(), quarantine, block, lookup, openVt, new ToolStripSeparator(), copy]);
 
         menu.Opening += (_, args) =>
         {
@@ -233,6 +254,7 @@ internal sealed class DashboardForm : Form
                                          or EventCategory.ScheduledTask or EventCategory.Network;
             trustPublisher.Text = $"Trust Everything Signed by \"{e.Signer}\"";
             quarantine.Visible = single && e.FilePath is not null && e.Category != EventCategory.Tamper && e.Change != ChangeKind.Removed;
+            block.Visible = quarantine.Visible;
             lookup.Visible = single && (e.Sha256 is not null || e.FilePath is not null) && e.Category != EventCategory.Tamper;
             openVt.Visible = single && e.Sha256 is not null;
         };
@@ -255,6 +277,12 @@ internal sealed class DashboardForm : Form
         }, e => e.TrustKey);
         trustPublisher.Click += async (_, _) => await TrustAsync(TrustKind.Publisher, e => e.Signer);
         quarantine.Click += async (_, _) => await QuarantineSelectedAsync();
+        block.Click += async (_, _) =>
+        {
+            var e = SelectedEvents()[0];
+            if (await ServiceCommands.ConfirmAndBlockAsync(this, e.FilePath!, $"From event #{e.Id}: {e.Subject}", [e.Id]))
+                await RefreshAllAsync();
+        };
         lookup.Click += async (_, _) =>
         {
             var e = SelectedEvents()[0];
@@ -278,7 +306,7 @@ internal sealed class DashboardForm : Form
                                    "Only do this for publishers you trust completely. Tampered or unsigned files are still reported.",
             _ => $"Stop alerting on:\n{value}",
         };
-        if (MessageBox.Show(this, explanation, "WinGuardian - Trust", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        if (MessageBox.Show(this, explanation, "WinGaurdian - Trust", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
             return;
 
         if (await ServiceCommands.SendAsync(new PipeRequest
@@ -302,7 +330,7 @@ internal sealed class DashboardForm : Form
         if (inWindows)
             message += "\n\nWARNING: this file is inside the Windows folder. Removing a legitimate system file can break Windows. Only continue if you are sure it is malicious.";
 
-        if (MessageBox.Show(this, message, "WinGuardian - Quarantine", MessageBoxButtons.YesNo,
+        if (MessageBox.Show(this, message, "WinGaurdian - Quarantine", MessageBoxButtons.YesNo,
                 inWindows ? MessageBoxIcon.Warning : MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             return;
 
@@ -346,7 +374,7 @@ internal sealed class DashboardForm : Form
     private async Task QuarantineActionAsync(string command, string confirmation)
     {
         if (_quarantine.SelectedItems.Count == 0 || _quarantine.SelectedItems[0].Tag is not QuarantineItem item) return;
-        if (MessageBox.Show(this, $"{confirmation}\n\n{item.OriginalPath}", "WinGuardian - Quarantine",
+        if (MessageBox.Show(this, $"{confirmation}\n\n{item.OriginalPath}", "WinGaurdian - Quarantine",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             return;
         if (await ServiceCommands.SendAsync(new PipeRequest { Command = command, Id = item.Id }, this))
@@ -361,6 +389,31 @@ internal sealed class DashboardForm : Form
         if (response is null) return;
         Fill(_trusted, response.Trusted ?? [], t => new ListViewItem(
             [t.Kind.ToString(), t.Value, t.AddedUtc.ToLocalTime().ToString("g"), t.Note ?? ""]) { Tag = t });
+    }
+
+    private async Task RefreshBlockedAsync()
+    {
+        var response = await TryQueryAsync(new PipeRequest { Command = PipeProtocol.Commands.Blocked });
+        if (response is null) return;
+        Fill(_blocked, response.Blocked ?? [], b => new ListViewItem(
+        [
+            b.Path,
+            b.AclApplied ? "Windows refuses to run it" : "Terminated whenever it starts",
+            string.Join(", ", b.Services.Select(s => s.Name)),
+            b.AddedUtc.ToLocalTime().ToString("g"),
+            b.Reason ?? "",
+            b.Sha256 ?? "",
+        ]) { Tag = b });
+    }
+
+    private async Task UnblockSelectedAsync()
+    {
+        if (_blocked.SelectedItems.Count == 0 || _blocked.SelectedItems[0].Tag is not BlockedItem b) return;
+        if (MessageBox.Show(this, $"Allow this program to run again?\n\n{b.Path}", "WinGaurdian - Unblock",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+        if (await ServiceCommands.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Unblock, Id = b.Id }, this))
+            await RefreshBlockedAsync();
     }
 
     private async Task RemoveTrustAsync()

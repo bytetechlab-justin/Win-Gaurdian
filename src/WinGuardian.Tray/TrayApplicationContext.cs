@@ -8,11 +8,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
 {
     private const Severity NotifyThreshold = Severity.Medium;
 
-    private readonly Icon _iconOk = IconFactory.CreateShield(Color.FromArgb(46, 160, 67));
-    private readonly Icon _iconBusy = IconFactory.CreateShield(Color.FromArgb(31, 111, 235), "…");
-    private readonly Icon _iconWarn = IconFactory.CreateShield(Color.FromArgb(210, 153, 34), "!");
-    private readonly Icon _iconAlert = IconFactory.CreateShield(Color.FromArgb(207, 34, 46), "!");
-    private readonly Icon _iconOffline = IconFactory.CreateShield(Color.Gray, "?");
+    private readonly Icon _iconOk = IconFactory.CreateTrayIcon();
+    private readonly Icon _iconBusy = IconFactory.CreateTrayIcon(Color.FromArgb(31, 111, 235), "…");
+    private readonly Icon _iconWarn = IconFactory.CreateTrayIcon(Color.FromArgb(230, 162, 0), "!");
+    private readonly Icon _iconAlert = IconFactory.CreateTrayIcon(Color.FromArgb(207, 34, 46), "!");
+    private readonly Icon _iconOffline = IconFactory.CreateTrayIcon(Color.FromArgb(110, 110, 110), "?", grayscale: true);
 
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _pollTimer;
@@ -36,7 +36,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon = new NotifyIcon
         {
             Icon = _iconOffline,
-            Text = "WinGuardian - connecting...",
+            Text = "WinGaurdian - connecting...",
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -54,7 +54,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var answer = MessageBox.Show(owner,
             "Rebuilding the baseline accepts the current state of the system as trusted and rescans every file.\n\n" +
             "Only do this if you are confident the system is clean. Continue?",
-            "WinGuardian - Rebuild Baseline", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            "WinGaurdian - Rebuild Baseline", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (answer == DialogResult.Yes)
             await ServiceCommands.SendAsync(PipeProtocol.Commands.Rebuild, owner);
     }
@@ -77,12 +77,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             // Something other than the real service is answering on our pipe: treat as an attack.
             _notifyIcon.Icon = _iconAlert;
-            SetTooltip("WinGuardian - WARNING: service identity could not be verified");
+            SetTooltip("WinGaurdian - WARNING: service identity could not be verified");
             if (_wasConnected)
             {
                 _wasConnected = false;
                 _dashboard?.ApplyDisconnected(ex.Message);
-                _notifyIcon.ShowBalloonTip(15000, "WinGuardian: possible tampering", ex.Message, ToolTipIcon.Error);
+                _notifyIcon.ShowBalloonTip(15000, "WinGaurdian: possible tampering", ex.Message, ToolTipIcon.Error);
             }
         }
         catch (Exception)
@@ -91,16 +91,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var state = ServiceInfo.GetState(GuardianPaths.ServiceName);
             var text = state switch
             {
-                ServiceInfo.State.NotInstalled => "WinGuardian - service is not installed",
-                ServiceInfo.State.Stopped => "WinGuardian - PROTECTION IS OFF (service stopped)",
-                _ => "WinGuardian - service is not responding",
+                ServiceInfo.State.NotInstalled => "WinGaurdian - service is not installed",
+                ServiceInfo.State.Stopped => "WinGaurdian - PROTECTION IS OFF (service stopped)",
+                _ => "WinGaurdian - service is not responding",
             };
             SetTooltip(text);
             if (_wasConnected)
             {
                 _wasConnected = false;
                 _dashboard?.ApplyDisconnected(text);
-                _notifyIcon.ShowBalloonTip(15000, "WinGuardian protection is OFF",
+                _notifyIcon.ShowBalloonTip(15000, "WinGaurdian protection is OFF",
                     text + ". Changes to your system are not being monitored.", ToolTipIcon.Error);
             }
         }
@@ -122,8 +122,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _notifyIcon.Icon = _iconOk;
 
         var text = status.ScanInProgress
-            ? $"WinGuardian - {status.Phase} ({status.ScanFilesProcessed:N0} files)"
-            : $"WinGuardian - {status.Phase}";
+            ? $"WinGaurdian - {status.Phase} ({status.ScanFilesProcessed:N0} files)"
+            : $"WinGaurdian - {status.Phase}";
         if (status.UnacknowledgedCount > 0)
             text += $"\n{status.UnacknowledgedCount:N0} unacknowledged alert(s)";
         SetTooltip(text);
@@ -136,7 +136,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // First contact: summarize what is already waiting instead of replaying history.
             _lastSeenEventId = status.LatestEventId;
             if (status.UnacknowledgedCount > 0 && status.HighestUnacknowledgedSeverity >= NotifyThreshold)
-                _notifyIcon.ShowBalloonTip(5000, "WinGuardian",
+                _notifyIcon.ShowBalloonTip(5000, "WinGaurdian",
                     $"{status.UnacknowledgedCount:N0} alert(s) waiting for review.", ToolTipIcon.Warning);
             return;
         }
@@ -156,7 +156,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (important.Count == 0) return;
 
         var top = important.OrderByDescending(e => e.Severity).First();
-        var title = important.Count == 1 ? $"WinGuardian: {top.Category} {top.Change}" : $"WinGuardian: {important.Count} new alerts";
+        var title = important.Count == 1 ? $"WinGaurdian: {top.Category} {top.Change}" : $"WinGaurdian: {important.Count} new alerts";
         var body = important.Count == 1 ? top.Subject : $"Most severe: {top.Category} {top.Change} - {top.Subject}";
         _notifyIcon.ShowBalloonTip(8000, title, Truncate(body, 250),
             top.Severity >= Severity.High ? ToolTipIcon.Error : ToolTipIcon.Warning);

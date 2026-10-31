@@ -24,6 +24,7 @@ public sealed class MonitorWorker(
     PersistenceMonitor persistenceMonitor,
     ScheduledTaskMonitor taskMonitor,
     NetworkMonitor networkMonitor,
+    ExecutionBlocker blocker,
     ProcessStartWatcher processStartWatcher,
     SelfProtection selfProtection,
     FileWatcherService watcher,
@@ -95,6 +96,7 @@ public sealed class MonitorWorker(
                 {
                     RunSafely("persistence poll", persistenceMonitor.Poll);
                     RunSafely("scheduled task check", taskMonitor.Poll);
+                    RunSafely("block enforcement", blocker.Verify);
                     nextPersistencePoll = now.AddSeconds(options.PersistencePollSeconds);
                 }
                 if (now >= nextNetworkPoll && networkMonitor.HasBaseline)

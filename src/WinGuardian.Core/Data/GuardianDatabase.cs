@@ -133,6 +133,11 @@ public sealed class GuardianDatabase
                 key TEXT PRIMARY KEY COLLATE NOCASE,
                 raw TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS blocked (
+                id   TEXT PRIMARY KEY,
+                path TEXT NOT NULL COLLATE NOCASE,
+                json TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reputation (
                 sha256      TEXT NOT NULL COLLATE NOCASE,
                 provider    TEXT NOT NULL,
@@ -410,6 +415,30 @@ public sealed class GuardianDatabase
         var e = GetEvents(null, int.MaxValue, false, $"id = {id}").FirstOrDefault();
         if (e is not null) e.Analysis = Scalar(c, null, "SELECT analysis FROM events WHERE id = $id", ("$id", id)) as string;
         return e;
+    }
+
+    // ------------------------------------------------------------- blocked
+
+    public List<string> GetBlocked()
+    {
+        using var c = Open();
+        using var cmd = Command(c, null, "SELECT json FROM blocked ORDER BY path");
+        using var r = cmd.ExecuteReader();
+        var result = new List<string>();
+        while (r.Read()) result.Add(r.GetString(0));
+        return result;
+    }
+
+    public void InsertBlocked(string id, string path, string json)
+    {
+        using var c = Open();
+        Execute(c, null, "INSERT INTO blocked(id, path, json) VALUES($i, $p, $j)", ("$i", id), ("$p", path), ("$j", json));
+    }
+
+    public void DeleteBlocked(string id)
+    {
+        using var c = Open();
+        Execute(c, null, "DELETE FROM blocked WHERE id = $i", ("$i", id));
     }
 
     // ------------------------------------------------------------- network

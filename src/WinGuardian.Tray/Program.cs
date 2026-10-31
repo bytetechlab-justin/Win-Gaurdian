@@ -54,7 +54,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Could not complete the request.\n\n" + ex.Message, "WinGuardian",
+            MessageBox.Show("Could not complete the request.\n\n" + ex.Message, "WinGaurdian",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }

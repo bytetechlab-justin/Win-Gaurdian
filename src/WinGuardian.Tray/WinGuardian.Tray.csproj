@@ -8,11 +8,22 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>WinGuardian.Tray</RootNamespace>
     <AssemblyName>WinGuardian.Tray</AssemblyName>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
+    <ApplicationIcon>Assets\WinGaurdian.ico</ApplicationIcon>
+    <!-- Windows shows the file description as the app name in notifications and Task Manager. -->
+    <AssemblyTitle>WinGaurdian</AssemblyTitle>
+    <Product>WinGaurdian</Product>
+    <Company>WinGaurdian</Company>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WinGuardian.Core\WinGuardian.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\logo.png" LogicalName="logo.png" />
+    <EmbeddedResource Include="Assets\shield.png" LogicalName="shield.png" />
+    <EmbeddedResource Include="Assets\WinGaurdian.ico" LogicalName="app.ico" />
   </ItemGroup>
 
 </Project>

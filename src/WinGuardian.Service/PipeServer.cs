@@ -22,6 +22,7 @@ public sealed class PipeServer(
     QuarantineManager quarantine,
     ReputationService reputation,
     NetworkMonitor network,
+    ExecutionBlocker blocker,
     ILogger<PipeServer> logger) : BackgroundService
 {
     private static readonly string Version =
@@ -56,7 +57,7 @@ public sealed class PipeServer(
                             Severity = Severity.High,
                             Category = EventCategory.Tamper,
                             Change = ChangeKind.Detected,
-                            Subject = "Another process has taken over WinGuardian's control pipe",
+                            Subject = "Another process has taken over WinGaurdian's control pipe",
                             Details = $"\\\\.\\pipe\\{PipeProtocol.PipeName} already existed when the service started " +
                                       "(pipe squatting). The tray app will refuse to trust it. Error: " + ex.Message,
                         });
@@ -174,6 +175,28 @@ public sealed class PipeServer(
         {
             case PipeProtocol.Commands.Status:
                 return new PipeResponse { Ok = true, Status = BuildStatus() };
+
+            case PipeProtocol.Commands.Blocked:
+                return new PipeResponse { Ok = true, Blocked = blocker.List() };
+
+            case PipeProtocol.Commands.Block:
+            {
+                if (string.IsNullOrWhiteSpace(request.Path)) return PipeResponse.Fail("No file path given.");
+                var item = blocker.Block(request.Path, request.Note ?? "Blocked by an administrator");
+                if (request.Ids is { Count: > 0 }) db.Acknowledge(request.Ids);
+                return PipeResponse.Success(
+                    (item.AclApplied ? "Blocked: Windows will refuse to run this file." : "Blocked: the file's permissions could not be changed (system-owned), so WinGaurdian will terminate it whenever it starts.") +
+                    (item.Services.Count > 0 ? $"\n\nStopped and disabled service(s): {string.Join(", ", item.Services.Select(s => s.Name))}." : ""));
+            }
+
+            case PipeProtocol.Commands.Unblock:
+            {
+                if (request.Id is null) return PipeResponse.Fail("No blocked item id given.");
+                var item = blocker.Unblock(request.Id);
+                return PipeResponse.Success("Unblocked." + (item.Services.Count > 0
+                    ? $"\n\nThe start type of {string.Join(", ", item.Services.Select(s => s.Name))} was restored; start the service manually or restart Windows if needed."
+                    : ""));
+            }
 
             case PipeProtocol.Commands.Network:
                 return new PipeResponse { Ok = true, Network = network.GetSnapshot() };
@@ -335,6 +358,7 @@ public sealed class PipeServer(
             QuarantineCount = db.GetQuarantine().Count,
             BaselineTaskCount = db.CountTaskStates(),
             TaskAuditingActive = TaskAuditing.IsEnabled() == true,
+            BlockedCount = db.GetBlocked().Count,
         };
     }
 }

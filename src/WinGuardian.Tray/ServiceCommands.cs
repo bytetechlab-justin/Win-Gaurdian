@@ -42,12 +42,12 @@ internal static class ServiceCommands
         }
         catch (ServerVerificationException ex)
         {
-            MessageBox.Show(owner, ex.Message, "WinGuardian - service could not be verified", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(owner, ex.Message, "WinGaurdian - service could not be verified", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(owner, "Could not reach the WinGuardian service.\n\n" + ex.Message, "WinGuardian",
+            MessageBox.Show(owner, "Could not reach the WinGaurdian service.\n\n" + ex.Message, "WinGaurdian",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
@@ -55,7 +55,26 @@ internal static class ServiceCommands
 
     public static void ShowResult(IWin32Window? owner, PipeResponse response) =>
         MessageBox.Show(owner, response.Ok ? response.Message ?? "Done." : response.Error ?? "The request failed.",
-            "WinGuardian", MessageBoxButtons.OK, response.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            "WinGaurdian", MessageBoxButtons.OK, response.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+
+    /// <summary>Asks for confirmation (with extra warnings for Windows files) and blocks the program.</summary>
+    public static async Task<bool> ConfirmAndBlockAsync(IWin32Window? owner, string path, string note, List<long>? eventIds = null)
+    {
+        var inWindows = path.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows) + "\\", StringComparison.OrdinalIgnoreCase);
+        var message =
+            $"Block this program?\n\n{path}\n\n" +
+            "WinGaurdian will:\n" +
+            "  - deny permission to run it (Windows will refuse to start it or load it as a DLL),\n" +
+            "  - terminate it now and whenever it (or a renamed copy) starts,\n" +
+            "  - stop and disable any Windows service that runs it.\n\n" +
+            "You can undo this from the Blocked tab.";
+        if (inWindows)
+            message += "\n\nWARNING: this file is part of the Windows folder. Blocking a legitimate Windows component can break features or Windows itself.";
+        if (MessageBox.Show(owner, message, "WinGaurdian - Block Executable", MessageBoxButtons.YesNo,
+                inWindows ? MessageBoxIcon.Warning : MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return false;
+        return await SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Block, Path = path, Note = note, Ids = eventIds }, owner);
+    }
 
     public static void OpenSettings()
     {

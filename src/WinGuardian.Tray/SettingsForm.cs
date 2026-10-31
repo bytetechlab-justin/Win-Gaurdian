@@ -1,4 +1,4 @@
-﻿using WinGuardian.Core;
+using WinGuardian.Core;
 using WinGuardian.Core.Ipc;
 
 namespace WinGuardian.Tray;
@@ -20,7 +20,8 @@ internal sealed class SettingsForm : Form
 
     public SettingsForm()
     {
-        Text = "WinGuardian Settings";
+        Text = "WinGaurdian Settings";
+        Icon = Branding.AppIcon;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -73,7 +74,7 @@ internal sealed class SettingsForm : Form
             var response = await PipeClient.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.GetSettings });
             if (response.Settings is not { } s)
             {
-                MessageBox.Show(this, response.Error ?? "Could not load settings.", "WinGuardian", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, response.Error ?? "Could not load settings.", "WinGaurdian", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Close();
                 return;
             }
@@ -86,7 +87,7 @@ internal sealed class SettingsForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "Could not reach the WinGuardian service.\n\n" + ex.Message, "WinGuardian", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "Could not reach the WinGaurdian service.\n\n" + ex.Message, "WinGaurdian", MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         }
     }

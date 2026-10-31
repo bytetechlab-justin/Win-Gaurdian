@@ -163,6 +163,14 @@ Right-click an event in the dashboard:
   reboot. Core Windows files and WinGuardian's own files are refused. The **Quarantine** tab can restore a
   file (its path is then trusted) or delete it permanently.
 - **Look Up Hash Online** / **Open in VirusTotal** — check the file's reputation on demand.
+- **Block Executable…** (also in the Firewall tab) — stops a program from running, in three layers:
+  a *deny Execute* permission for Everyone on the file (Windows itself then refuses to start it or load it as a
+  DLL — works on every edition, no driver); any service that runs the file is stopped and disabled (its start
+  type is remembered); and anything started from the file — or a renamed copy with the same SHA-256 — is
+  terminated the moment WinGaurdian sees it. If someone removes the permission, it is re-applied and reported.
+  Core Windows files, the .NET runtime and WinGaurdian's own files cannot be blocked. System files owned by
+  TrustedInstaller can't have their permissions changed, so those are blocked by termination only. Undo from
+  the **Blocked** tab (service start types are restored; services are not started automatically).
 
 Acknowledged events are deleted after the retention period (default 90 days, set in Settings); anything
 older than a year is removed regardless.
@@ -193,6 +201,19 @@ Keys are stored in the protected database, never in `appsettings.json`.
 - If the service is stopped or killed while Windows is running, a High tamper alert is raised when it comes
   back, and the tray shows a "protection is off" notification immediately. `install.ps1` sets a short-lived
   maintenance marker so upgrades are reported as Info instead.
+
+## Branding
+
+The product is displayed as **WinGaurdian** (window titles, tray, notifications, the service's display name
+"WinGaurdian Monitor"). Internal identifiers keep the original spelling so existing installs keep working: the
+Windows service name `WinGuardian`, `C:\Program Files\WinGuardian`, `C:\ProgramData\WinGuardian`, project and
+namespace names.
+
+The logo/icon assets in `src\WinGuardian.Tray\Assets` are generated from the master PNG:
+
+```powershell
+.\scripts\build-icons.ps1 -Source C:\path\to\WinGaurdian.png
+```
 
 ## Build & install
 

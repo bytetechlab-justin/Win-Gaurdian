@@ -1,38 +1,59 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
 namespace WinGuardian.Tray;
 
-/// <summary>Draws the shield icons at runtime so no .ico assets are needed yet.</summary>
+/// <summary>Tray icons: the WinGaurdian shield, with a small coloured status badge in the corner.</summary>
 internal static class IconFactory
 {
     [DllImport("user32.dll")]
     private static extern bool DestroyIcon(IntPtr handle);
 
-    public static Icon CreateShield(Color fill, string? glyph = null)
+    /// <param name="badge">Badge colour, or null for the plain shield.</param>
+    /// <param name="glyph">Character drawn in the badge.</param>
+    /// <param name="grayscale">Draw the shield without colour (service not running).</param>
+    public static Icon CreateTrayIcon(Color? badge = null, string? glyph = null, bool grayscale = false)
     {
-        using var bitmap = new Bitmap(32, 32);
+        // Twice the small-icon size keeps the shield crisp on high-DPI displays (Windows scales it down).
+        var size = Math.Max(32, SystemInformation.SmallIconSize.Width * 2);
+        using var bitmap = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.Clear(Color.Transparent);
 
-            using var path = new GraphicsPath();
-            path.AddLines(new PointF[]
+            using var attributes = new ImageAttributes();
+            if (grayscale)
             {
-                new(16, 1), new(29, 6), new(28, 17), new(16, 31), new(4, 17), new(3, 6),
-            });
-            path.CloseFigure();
-            using var brush = new SolidBrush(fill);
-            using var outline = new Pen(Color.FromArgb(40, 40, 40), 1.5f);
-            g.FillPath(brush, path);
-            g.DrawPath(outline, path);
+                attributes.SetColorMatrix(new ColorMatrix(
+                [
+                    [0.30f, 0.30f, 0.30f, 0, 0],
+                    [0.59f, 0.59f, 0.59f, 0, 0],
+                    [0.11f, 0.11f, 0.11f, 0, 0],
+                    [0, 0, 0, 0.75f, 0],
+                    [0, 0, 0, 0, 1],
+                ]));
+            }
+            var shield = Branding.Shield;
+            g.DrawImage(shield, new Rectangle(0, 0, size, size), 0, 0, shield.Width, shield.Height, GraphicsUnit.Pixel, attributes);
 
-            if (glyph is not null)
+            if (badge is { } color)
             {
-                using var font = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel);
-                using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                g.DrawString(glyph, font, Brushes.White, new RectangleF(0, 1, 32, 28), format);
+                var d = size * 0.55f;
+                var rect = new RectangleF(size - d, size - d, d - 1, d - 1);
+                using var fill = new SolidBrush(color);
+                using var outline = new Pen(Color.White, Math.Max(1.5f, size / 24f));
+                g.FillEllipse(fill, rect);
+                g.DrawEllipse(outline, rect);
+                if (glyph is not null)
+                {
+                    using var font = new Font("Segoe UI", d * 0.62f, FontStyle.Bold, GraphicsUnit.Pixel);
+                    using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                    g.DrawString(glyph, font, Brushes.White, rect, format);
+                }
             }
         }
 
