@@ -10,7 +10,19 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _virusTotalKey = new() { Width = 420, UseSystemPasswordChar = true };
     private readonly NumericUpDown _virusTotalLimit = new() { Minimum = 0, Maximum = 1_000_000, Width = 100 };
     private readonly NumericUpDown _retentionDays = new() { Minimum = 1, Maximum = 3650, Width = 100 };
-    private readonly CheckBox _autoQuarantine = new() { Text = "Automatically quarantine files confirmed as known malware", AutoSize = true };
+    private static readonly (string Text, Severity? Level)[] AutoQuarantineChoices =
+    [
+        ("Never - always ask me in a pop-up window (recommended)", null),
+        ("High threat: files confirmed as known malware", Severity.High),
+        ("Medium threat and above: known malware and suspicious files", Severity.Medium),
+    ];
+    private readonly ComboBox _autoQuarantine = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 420 };
+    private readonly Label _autoQuarantineHelp = new()
+    {
+        Text = "Files at or above this threat level are quarantined without asking (you get a notification, and can restore " +
+               "them from the Quarantine tab). Anything else WinGaurdian wants to act on is shown to you in a pop-up first.",
+        AutoSize = true, MaximumSize = new Size(420, 0),
+    };
     private readonly CheckBox _showKeys = new() { Text = "Show keys", AutoSize = true };
     private readonly CheckBox _taskAuditing = new()
     {
@@ -43,7 +55,10 @@ internal sealed class SettingsForm : Form
         Row("", new LinkLabel { Text = "Get a free key at virustotal.com (account > API key)", AutoSize = true, Tag = "https://www.virustotal.com/gui/my-apikey" });
         Row("VirusTotal lookups per day:", _virusTotalLimit);
         Row("Keep acknowledged events (days):", _retentionDays);
-        Row("", _autoQuarantine);
+        Row("Quarantine automatically:", _autoQuarantine);
+        Row("", _autoQuarantineHelp);
+        foreach (var (text, _) in AutoQuarantineChoices) _autoQuarantine.Items.Add(text);
+        _autoQuarantine.SelectedIndex = 0;
         Row("", _taskAuditing);
         Row("", _showKeys);
 
@@ -84,8 +99,8 @@ internal sealed class SettingsForm : Form
             _virusTotalKey.Text = s.VirusTotalApiKey ?? "";
             _virusTotalLimit.Value = Math.Clamp(s.VirusTotalDailyLimit, 0, 1_000_000);
             _retentionDays.Value = Math.Clamp(s.EventRetentionDays, 1, 3650);
-            _autoQuarantine.Checked = s.AutoQuarantineMalicious;
             _taskAuditing.Checked = s.TaskAuditingEnabled;
+            _autoQuarantine.SelectedIndex = Math.Max(0, Array.FindIndex(AutoQuarantineChoices, c => c.Level == s.AutoQuarantineMinSeverity));
         }
         catch (Exception ex)
         {
@@ -102,8 +117,8 @@ internal sealed class SettingsForm : Form
             VirusTotalApiKey = _virusTotalKey.Text,
             VirusTotalDailyLimit = (int)_virusTotalLimit.Value,
             EventRetentionDays = (int)_retentionDays.Value,
-            AutoQuarantineMalicious = _autoQuarantine.Checked,
             TaskAuditingEnabled = _taskAuditing.Checked,
+            AutoQuarantineMinSeverity = AutoQuarantineChoices[Math.Max(0, _autoQuarantine.SelectedIndex)].Level,
         };
         if (await ServiceCommands.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.SetSettings, Settings = settings }, this, showSuccess: false))
         {

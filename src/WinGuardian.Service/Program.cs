@@ -31,7 +31,13 @@ builder.Services.AddSingleton(_ =>
     db.Initialize(); // before any hosted service (including the pipe server) touches it
     return db;
 });
-builder.Services.AddSingleton<GuardianState>();
+builder.Services.AddSingleton(sp =>
+{
+    // "Turned off" survives restarts until an administrator turns WinGaurdian back on.
+    var state = new GuardianState();
+    state.SetProtectionOff(sp.GetRequiredService<GuardianDatabase>().GetMetaDate(GuardianDatabase.MetaProtectionOff));
+    return state;
+});
 builder.Services.AddSingleton<PathFilter>();
 builder.Services.AddSingleton<TrustStore>();
 builder.Services.AddSingleton<EventRecorder>();

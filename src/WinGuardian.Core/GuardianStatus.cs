@@ -25,4 +25,8 @@ public sealed class GuardianStatus
     public long BaselineTaskCount { get; set; }
     public bool TaskAuditingActive { get; set; }
     public int BlockedCount { get; set; }
+
+    /// <summary>Turned off by an administrator: monitoring only, nothing is scanned, quarantined or blocked automatically.</summary>
+    public bool ProtectionOff { get; set; }
+    public DateTime? ProtectionOffSinceUtc { get; set; }
 }

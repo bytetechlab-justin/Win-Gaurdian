@@ -16,6 +16,8 @@ internal sealed class DashboardForm : Form
     private readonly FirewallPanel _firewall = new();
     private readonly ProgramMonitorPanel _programMonitor = new();
     private readonly ListView _blocked;
+    private readonly Button _powerButton;
+    private bool? _protectionOff; // null until the service has answered
     private bool _refreshQueued;
 
     public const string ProgramMonitorTab = "Program Monitor";
@@ -52,6 +54,14 @@ internal sealed class DashboardForm : Form
             ServiceCommands.OpenSettings();
             return RefreshAllAsync();
         }));
+        _powerButton = MakeButton("Turn Off", async () =>
+        {
+            if (_protectionOff is not { } off) return;
+            await ServiceCommands.SetProtectionAsync(turnOn: off, this);
+            await RefreshAllAsync();
+        });
+        _powerButton.Enabled = false;
+        toolbar.Controls.Add(_powerButton);
         _unackOnly = new CheckBox { Text = "Unacknowledged only", AutoSize = true, Margin = new Padding(16, 8, 0, 0) };
         _unackOnly.CheckedChanged += async (_, _) => await RefreshEventsAsync();
         toolbar.Controls.Add(_unackOnly);
@@ -91,7 +101,7 @@ internal sealed class DashboardForm : Form
         Controls.Add(_tabs);
         Controls.Add(toolbar);
         // Header: status on the left, logo in the top-right corner.
-        var header = new Panel { Dock = DockStyle.Top, Height = 128 };
+        var header = new Panel { Dock = DockStyle.Top, Height = 150 }; // room for the "turned off" line
         header.Controls.Add(_statusLabel);
         header.Controls.Add(new PictureBox
         {
@@ -134,8 +144,13 @@ internal sealed class DashboardForm : Form
         string When(DateTime? utc) => utc?.ToLocalTime().ToString("g") ?? "never";
         string OnOff(bool on) => on ? "on" : "off";
         var progress = s.ScanInProgress ? $"  -  {s.ScanFilesProcessed:N0} files processed" : "";
-        _statusLabel.ForeColor = Theme.P.Text;
+        SetProtectionState(s.ProtectionOff);
+        _statusLabel.ForeColor = s.ProtectionOff ? Theme.P.Danger : Theme.P.Text;
         _statusLabel.Text =
+            (s.ProtectionOff
+                ? $"TURNED OFF since {When(s.ProtectionOffSinceUtc)}: changes are still recorded, but nothing is scanned, looked up, " +
+                  "quarantined or blocked automatically. Click Turn On to resume.\n"
+                : "") +
             $"Service v{s.ServiceVersion}: {s.Phase}{progress}\n" +
             $"Baseline created: {When(s.BaselineCreatedUtc)}    Last full scan: {When(s.LastFullScanUtc)}\n" +
             $"Baseline: {s.BaselineFileCount:N0} files, {s.BaselineProcessCount:N0} executables, {s.BaselineServiceCount:N0} services/drivers, {s.BaselinePersistenceCount:N0} autostart entries\n" +
@@ -145,8 +160,16 @@ internal sealed class DashboardForm : Form
             (s.LastError is null ? "" : $"    Last error: {s.LastError}");
     }
 
+    private void SetProtectionState(bool? off)
+    {
+        _protectionOff = off;
+        _powerButton.Enabled = off is not null;
+        _powerButton.Text = off == true ? "Turn On" : "Turn Off";
+    }
+
     public void ApplyDisconnected(string? message = null)
     {
+        SetProtectionState(null);
         _statusLabel.ForeColor = Theme.P.Danger;
         _statusLabel.Text = message ?? "The WinGaurdian service is not running or cannot be reached.";
     }

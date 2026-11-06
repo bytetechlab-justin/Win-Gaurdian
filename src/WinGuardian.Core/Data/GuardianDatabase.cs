@@ -23,6 +23,7 @@ public sealed class GuardianDatabase
     public const string MetaAuditingEnabledByUs = "task_auditing_enabled_by_winguardian";
     public const string MetaNetworkBaseline = "network_baseline_utc";
     public const string MetaFirewallState = "firewall_state";
+    public const string MetaProtectionOff = "protection_off_since_utc";
 
     private readonly string _connectionString;
 
@@ -157,6 +158,7 @@ public sealed class GuardianDatabase
         EnsureColumn(c, "events", "signature", "TEXT");
         EnsureColumn(c, "events", "signer", "TEXT");
         EnsureColumn(c, "events", "analysis", "TEXT");
+        EnsureColumn(c, "events", "pending_action", "TEXT");
 
         // Scheduled tasks moved from the generic persistence monitor to ScheduledTaskMonitor.
         Execute(c, null, "DELETE FROM persistence WHERE location = 'Scheduled Task'");
@@ -357,13 +359,14 @@ public sealed class GuardianDatabase
     public long InsertEvent(SqliteConnection c, SqliteTransaction? tx, GuardianEvent e)
     {
         Execute(c, tx, """
-            INSERT INTO events(time_utc, severity, category, change, subject, details, acknowledged, file_path, sha256, trust_key, signature, signer, analysis)
-            VALUES($t, $s, $c, $ch, $sub, $d, $a, $fp, $h, $tk, $sig, $sgn, $an)
+            INSERT INTO events(time_utc, severity, category, change, subject, details, acknowledged, file_path, sha256, trust_key, signature, signer, analysis, pending_action)
+            VALUES($t, $s, $c, $ch, $sub, $d, $a, $fp, $h, $tk, $sig, $sgn, $an, $pa)
             """,
             ("$t", Iso(e.TimeUtc)), ("$s", (int)e.Severity),
             ("$c", e.Category.ToString()), ("$ch", e.Change.ToString()), ("$sub", e.Subject),
             ("$d", e.Details), ("$a", e.Acknowledged ? 1 : 0),
-            ("$fp", e.FilePath), ("$h", e.Sha256), ("$tk", e.TrustKey), ("$sig", e.Signature), ("$sgn", e.Signer), ("$an", e.Analysis));
+            ("$fp", e.FilePath), ("$h", e.Sha256), ("$tk", e.TrustKey), ("$sig", e.Signature), ("$sgn", e.Signer), ("$an", e.Analysis),
+            ("$pa", e.PendingAction));
         e.Id = (long)Scalar(c, tx, "SELECT last_insert_rowid()")!;
         return e.Id;
     }
@@ -379,7 +382,7 @@ public sealed class GuardianDatabase
         if (extraFilter is not null) where.Add(extraFilter);
         if (sinceId is not null) where.Add("id > $since");
         if (unacknowledgedOnly) where.Add("acknowledged = 0");
-        var sql = "SELECT id, time_utc, severity, category, change, subject, details, acknowledged, file_path, sha256, trust_key, signature, signer FROM events"
+        var sql = "SELECT id, time_utc, severity, category, change, subject, details, acknowledged, file_path, sha256, trust_key, signature, signer, pending_action FROM events"
                   + (where.Count > 0 ? " WHERE " + string.Join(" AND ", where) : "")
                   + (sinceId is not null ? " ORDER BY id ASC" : " ORDER BY id DESC")
                   + " LIMIT $limit";
@@ -403,6 +406,7 @@ public sealed class GuardianDatabase
                 TrustKey = NullableString(r, 10),
                 Signature = NullableString(r, 11),
                 Signer = NullableString(r, 12),
+                PendingAction = NullableString(r, 13),
             });
         }
         return list;

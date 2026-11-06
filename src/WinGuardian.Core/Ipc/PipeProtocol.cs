@@ -48,8 +48,12 @@ public static class PipeProtocol
         public const string GetSettings = "getSettings";
         public const string SetSettings = "setSettings";
 
+        // Turn off: keep monitoring, but stop automatic scans, lookups, quarantine and blocking. Turn on: resume.
+        public const string TurnOff = "turnOff";
+        public const string TurnOn = "turnOn";
+
         public static bool RequiresAdmin(string command) => command is
-            Acknowledge or Rebuild or Trust or Untrust or Quarantine or Restore or DeleteQuarantined or GetSettings or SetSettings or Block or Unblock;
+            Acknowledge or Rebuild or Trust or Untrust or Quarantine or Restore or DeleteQuarantined or GetSettings or SetSettings or Block or Unblock or TurnOff or TurnOn;
     }
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)

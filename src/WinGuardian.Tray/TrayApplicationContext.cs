@@ -3,7 +3,11 @@ using WinGuardian.Core.Ipc;
 
 namespace WinGuardian.Tray;
 
-/// <summary>Notification-area icon: polls the service, reflects its state in the icon, and pops balloon alerts.</summary>
+/// <summary>
+/// Notification-area icon: polls the service, reflects its state in the icon, pops balloon alerts, and opens a
+/// <see cref="ThreatPromptForm"/> (one at a time, centered on the screen) for every alert where WinGaurdian wants to
+/// act on a file, so nothing is quarantined, deleted, moved or changed without the user's say-so.
+/// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
     private const Severity NotifyThreshold = Severity.Medium;
@@ -13,6 +17,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly Icon _iconWarn = IconFactory.CreateTrayIcon(Color.FromArgb(230, 162, 0), "!");
     private readonly Icon _iconAlert = IconFactory.CreateTrayIcon(Color.FromArgb(207, 34, 46), "!");
     private readonly Icon _iconOffline = IconFactory.CreateTrayIcon(Color.FromArgb(110, 110, 110), "?", grayscale: true);
+    private readonly Icon _iconTurnedOff = IconFactory.CreateTrayIcon(Color.FromArgb(110, 110, 110), "–", grayscale: true); // en dash: "off"
 
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _pollTimer;
@@ -20,14 +25,27 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private long? _lastSeenEventId;
     private bool _polling;
     private bool _wasConnected = true;
+    private bool? _protectionOff; // null until the service has answered
+    private readonly ToolStripMenuItem _powerItem;
+    private readonly Queue<GuardianEvent> _prompts = new();
+    private readonly HashSet<long> _prompted = [];
+    private ThreatPromptForm? _activePrompt;
 
     public TrayApplicationContext()
     {
         var menu = new ContextMenuStrip();
+        _powerItem = new ToolStripMenuItem("Turn Off") { Enabled = false };
+        _powerItem.Click += async (_, _) =>
+        {
+            if (_protectionOff is { } off) await ServiceCommands.SetProtectionAsync(turnOn: off, null);
+            await PollAsync();
+        };
         menu.Items.Add("Open Dashboard", null, (_, _) => ShowDashboard());
         menu.Items.Add("Run a Program and Monitor It...", null, (_, _) => ShowDashboard(DashboardForm.ProgramMonitorTab));
         menu.Items.Add("Run Full Scan Now", null, async (_, _) => await ServiceCommands.SendAsync(PipeProtocol.Commands.Scan));
         menu.Items.Add("Acknowledge All Alerts", null, async (_, _) => await ServiceCommands.SendAsync(PipeProtocol.Commands.Acknowledge));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_powerItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings...", null, (_, _) => ServiceCommands.OpenSettings());
         menu.Items.Add("Rebuild Baseline...", null, async (_, _) => await ConfirmRebuildAsync(null));
@@ -107,6 +125,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (response.Status is not { } status) throw new IOException(response.Error ?? "No status returned.");
 
             _wasConnected = true;
+            SetProtectionState(status.ProtectionOff);
             UpdateIcon(status);
             await NotifyNewEventsAsync(status);
             _dashboard?.ApplyStatus(status);
@@ -114,6 +133,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         catch (ServerVerificationException ex)
         {
             // Something other than the real service is answering on our pipe: treat as an attack.
+            SetProtectionState(null);
             _notifyIcon.Icon = _iconAlert;
             SetTooltip("WinGaurdian - WARNING: service identity could not be verified");
             if (_wasConnected)
@@ -125,6 +145,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception)
         {
+            SetProtectionState(null);
             _notifyIcon.Icon = _iconOffline;
             var state = ServiceInfo.GetState(GuardianPaths.ServiceName);
             var text = state switch
@@ -148,8 +169,27 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    private void SetProtectionState(bool? off)
+    {
+        _protectionOff = off;
+        _powerItem.Enabled = off is not null;
+        _powerItem.Text = off == true ? "Turn On" : "Turn Off";
+    }
+
     private void UpdateIcon(GuardianStatus status)
     {
+        if (status.ProtectionOff)
+        {
+            _notifyIcon.Icon = _iconTurnedOff;
+            // Tooltips are limited to 127 characters, so keep this short.
+            var off = "WinGaurdian - TURNED OFF (monitoring only)";
+            if (status.ProtectionOffSinceUtc is { } since) off += $"\nOff since {since.ToLocalTime():g}";
+            if (status.ScanInProgress) off += $"\n{status.Phase} ({status.ScanFilesProcessed:N0} files)";
+            if (status.UnacknowledgedCount > 0) off += $"\n{status.UnacknowledgedCount:N0} unacknowledged alert(s)";
+            SetTooltip(off);
+            return;
+        }
+
         if (status.UnacknowledgedCount > 0 && status.HighestUnacknowledgedSeverity >= Severity.High)
             _notifyIcon.Icon = _iconAlert;
         else if (status.UnacknowledgedCount > 0 && status.HighestUnacknowledgedSeverity >= NotifyThreshold)
@@ -173,7 +213,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             // First contact: summarize what is already waiting instead of replaying history.
             _lastSeenEventId = status.LatestEventId;
-            if (status.UnacknowledgedCount > 0 && status.HighestUnacknowledgedSeverity >= NotifyThreshold)
+            if (status.ProtectionOff) return;
+            // Decisions still waiting from while the tray wasn't running (e.g. before sign-in) get their pop-up now.
+            var waiting = await PipeClient.SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Events, UnacknowledgedOnly = true, Limit = 500 });
+            var prompted = EnqueuePrompts((waiting.Events ?? []).OrderBy(e => e.Id));
+            if (prompted == 0 && status.UnacknowledgedCount > 0 && status.HighestUnacknowledgedSeverity >= NotifyThreshold)
                 _notifyIcon.ShowBalloonTip(5000, "WinGaurdian",
                     $"{status.UnacknowledgedCount:N0} alert(s) waiting for review.", ToolTipIcon.Warning);
             return;
@@ -190,7 +234,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _lastSeenEventId = status.LatestEventId;
         _dashboard?.RefreshEventsSoon();
 
-        var important = fresh.Where(e => e.Severity >= NotifyThreshold).ToList();
+        // Turned off: keep recording quietly (the events are in the dashboard), but don't pop up alerts.
+        if (status.ProtectionOff) return;
+
+        EnqueuePrompts(fresh);
+
+        // Alerts that got a pop-up don't need a balloon as well.
+        var important = fresh.Where(e => e.Severity >= NotifyThreshold && !_prompted.Contains(e.Id)).ToList();
         if (important.Count == 0) return;
 
         var top = important.OrderByDescending(e => e.Severity).First();
@@ -198,6 +248,35 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var body = important.Count == 1 ? top.Subject : $"Most severe: {top.Category} {top.Change} - {top.Subject}";
         _notifyIcon.ShowBalloonTip(8000, title, Truncate(body, 250),
             top.Severity >= Severity.High ? ToolTipIcon.Error : ToolTipIcon.Warning);
+    }
+
+    /// <summary>Queues a pop-up for each unacknowledged alert that asks for a decision. Returns how many were queued.</summary>
+    private int EnqueuePrompts(IEnumerable<GuardianEvent> events)
+    {
+        var count = 0;
+        foreach (var e in events)
+        {
+            if (e.PendingAction is null || e.FilePath is null || e.Acknowledged || !_prompted.Add(e.Id)) continue;
+            _prompts.Enqueue(e);
+            count++;
+        }
+        ShowNextPrompt();
+        return count;
+    }
+
+    private void ShowNextPrompt()
+    {
+        if (_activePrompt is not null || _prompts.Count == 0) return;
+        var prompt = new ThreatPromptForm(_prompts.Dequeue());
+        _activePrompt = prompt;
+        prompt.FormClosed += (_, _) =>
+        {
+            _activePrompt = null;
+            prompt.Dispose();
+            _dashboard?.RefreshEventsSoon();
+            ShowNextPrompt();
+        };
+        prompt.Show();
     }
 
     private void ShowDashboard(string? tab = null)
@@ -225,6 +304,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _pollTimer.Stop();
         _notifyIcon.Visible = false;
+        _prompts.Clear();
+        _activePrompt?.Close();
         _dashboard?.Close();
         base.ExitThreadCore();
     }
@@ -235,7 +316,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             _pollTimer.Dispose();
             _notifyIcon.Dispose();
-            foreach (var icon in new[] { _iconOk, _iconBusy, _iconWarn, _iconAlert, _iconOffline })
+            foreach (var icon in new[] { _iconOk, _iconBusy, _iconWarn, _iconAlert, _iconOffline, _iconTurnedOff })
                 icon.Dispose();
         }
         base.Dispose(disposing);

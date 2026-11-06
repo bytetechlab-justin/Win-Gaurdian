@@ -38,8 +38,10 @@ public sealed class BlockedItem
 /// 2. services that run the file are stopped and disabled (their start type is restored on unblock);
 /// 3. any process started from the file — or a renamed copy with the same SHA-256 — is terminated as soon
 ///    as it is seen (ETW), as a backstop if the file's permissions are reset or it is copied elsewhere.
+/// While WinGaurdian is turned off (<see cref="GuardianState.ProtectionOff"/>), nothing is terminated and a removed
+/// deny-execute entry is not put back; the entries already on blocked files stay. Explicit Block/Unblock still work.
 /// </summary>
-public sealed class ExecutionBlocker(GuardianDatabase db, EventRecorder events, ILogger<ExecutionBlocker> logger)
+public sealed class ExecutionBlocker(GuardianDatabase db, EventRecorder events, GuardianState state, ILogger<ExecutionBlocker> logger)
 {
     private static readonly SecurityIdentifier Everyone = new(WellKnownSidType.WorldSid, null);
     private static readonly TimeSpan RepeatSuppression = TimeSpan.FromMinutes(1);
@@ -129,6 +131,7 @@ public sealed class ExecutionBlocker(GuardianDatabase db, EventRecorder events, 
     /// <summary>Called for every process start. Returns true if the process was blocked (terminated).</summary>
     public bool Enforce(ProcessStart start, string? sha256)
     {
+        if (state.ProtectionOff) return false;
         var p = start.Process;
         var byPath = IsBlockedPath(p.ImagePath);
         if (!byPath && !IsBlockedHash(sha256)) return false;
@@ -165,6 +168,7 @@ public sealed class ExecutionBlocker(GuardianDatabase db, EventRecorder events, 
     /// </summary>
     public void Verify()
     {
+        if (state.ProtectionOff) return;
         foreach (var item in List())
         {
             if (!File.Exists(item.Path)) continue;

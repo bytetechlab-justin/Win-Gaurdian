@@ -360,6 +360,33 @@ public sealed class PipeServer(
                 quarantine.Delete(request.Id);
                 return PipeResponse.Success("Quarantined file permanently deleted.");
 
+            case PipeProtocol.Commands.TurnOff:
+            {
+                if (state.ProtectionOff) return PipeResponse.Success("WinGaurdian is already turned off.");
+                var now = DateTime.UtcNow;
+                db.SetMetaDate(GuardianDatabase.MetaProtectionOff, now);
+                state.SetProtectionOff(now);
+                state.Commands.Writer.TryWrite(GuardianCommand.ProtectionTurnedOff);
+                events.Info("WinGaurdian turned off" + By(client),
+                    "Changes are still monitored and recorded, but no automatic file scans, reputation lookups, quarantining " +
+                    "or terminating of blocked programs will happen until it is turned on again.");
+                return PipeResponse.Success(
+                    "WinGaurdian is turned off.\n\nIt keeps recording changes to your system, but it will not scan files, look up " +
+                    "reputations, quarantine anything or terminate blocked programs automatically until you turn it on again.\n\n" +
+                    "Programs you blocked earlier keep their \"deny run\" permission; unblock them in the Blocked tab if needed.");
+            }
+
+            case PipeProtocol.Commands.TurnOn:
+            {
+                if (!state.ProtectionOff) return PipeResponse.Success("WinGaurdian is already turned on.");
+                var since = state.ProtectionOffSinceUtc;
+                db.SetMeta(GuardianDatabase.MetaProtectionOff, null);
+                state.SetProtectionOff(null);
+                events.Info("WinGaurdian turned on" + By(client),
+                    since is null ? null : $"It had been turned off since {since.Value.ToLocalTime():g}.");
+                return PipeResponse.Success("WinGaurdian is turned on. Automatic scanning, detection and quarantine have resumed.");
+            }
+
             case PipeProtocol.Commands.GetSettings:
             {
                 var current = db.GetRuntimeSettings();
@@ -386,12 +413,27 @@ public sealed class PipeServer(
                 db.SetRuntimeSettings(s);
                 events.Info("Settings changed",
                     $"MalwareBazaar {(s.MalwareBazaarApiKey is null ? "off" : "on")}, VirusTotal {(s.VirusTotalApiKey is null ? "off" : "on")}, " +
-                    $"auto-quarantine {(s.AutoQuarantineMalicious ? "on" : "off")}, event retention {s.EventRetentionDays} days." + auditingNote);
+                    $"auto-quarantine: {s.AutoQuarantineMinSeverity switch { Severity.High => "known malware", Severity.Medium => "known malware and suspicious files", _ => "off (always ask)" }}, " +
+                    $"event retention {s.EventRetentionDays} days." + auditingNote);
                 return PipeResponse.Success("Settings saved.");
             }
 
             default:
                 return PipeResponse.Fail($"Unknown command '{request.Command}'.");
+        }
+    }
+
+    /// <summary>" by DOMAIN\user" for event subjects, or nothing if the account can't be resolved.</summary>
+    private static string By(PipeClientInfo client)
+    {
+        if (client.Sid is null) return "";
+        try
+        {
+            return " by " + new SecurityIdentifier(client.Sid).Translate(typeof(NTAccount)).Value;
+        }
+        catch (SystemException) // IdentityNotMappedException, or the account lookup failed
+        {
+            return "";
         }
     }
 
@@ -443,6 +485,8 @@ public sealed class PipeServer(
             BaselineTaskCount = db.CountTaskStates(),
             TaskAuditingActive = TaskAuditing.IsEnabled() == true,
             BlockedCount = db.GetBlocked().Count,
+            ProtectionOff = state.ProtectionOff,
+            ProtectionOffSinceUtc = state.ProtectionOffSinceUtc,
         };
     }
 }

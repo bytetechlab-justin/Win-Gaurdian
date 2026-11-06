@@ -32,6 +32,8 @@ public sealed class MonitorWorker(
     ILogger<MonitorWorker> logger) : BackgroundService
 {
     private Task? _scanTask;
+    private CancellationTokenSource? _scanCts;
+    private bool _scanIsBaseline;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -142,6 +144,7 @@ public sealed class MonitorWorker(
 
     private bool IsFullScanDue(DateTime now)
     {
+        if (state.ProtectionOff) return false; // turned off: no scheduled scans (one asked for from the tray still runs)
         if (db.GetMetaDate(GuardianDatabase.MetaBaselineCreated) is null) return false;
         var last = db.GetMetaDate(GuardianDatabase.MetaLastFullScan);
         return last is null || now - last.Value >= TimeSpan.FromHours(options.FullScanIntervalHours);
@@ -159,6 +162,14 @@ public sealed class MonitorWorker(
                 break;
             case GuardianCommand.RebuildBaseline when IsScanRunning:
                 events.Info("Baseline rebuild skipped", "A file scan was in progress; try again when it finishes.");
+                break;
+            case GuardianCommand.ProtectionTurnedOff:
+                // Stop a running full scan, but let a baseline scan finish: cancelling it would leave no baseline.
+                if (IsScanRunning && !_scanIsBaseline)
+                {
+                    _scanCts?.Cancel();
+                    events.Info("Full file scan stopped", "WinGaurdian was turned off while the scan was running.");
+                }
                 break;
             case GuardianCommand.RebuildBaseline:
                 watcher.Stop();
@@ -189,6 +200,10 @@ public sealed class MonitorWorker(
     {
         state.ScanInProgress = true;
         if (!isBaseline) state.Phase = "Scanning";
+        _scanCts?.Dispose();
+        _scanCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _scanIsBaseline = isBaseline;
+        var scanToken = _scanCts.Token;
 
         _scanTask = Task.Run(() =>
         {
@@ -197,7 +212,7 @@ public sealed class MonitorWorker(
             try
             {
                 var started = DateTime.UtcNow;
-                var changes = fileMonitor.RunFullScan(isBaseline, ct);
+                var changes = fileMonitor.RunFullScan(isBaseline, scanToken);
                 var elapsed = DateTime.UtcNow - started;
 
                 if (isBaseline)

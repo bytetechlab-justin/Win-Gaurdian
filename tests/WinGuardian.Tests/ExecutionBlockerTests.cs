@@ -13,6 +13,7 @@ public class ExecutionBlockerTests : IDisposable
     private readonly string _work = Path.Combine(Path.GetTempPath(), "wg-tests", Guid.NewGuid().ToString("N"));
     private readonly GuardianDatabase _db;
     private readonly ExecutionBlocker _blocker;
+    private readonly GuardianState _state = new();
 
     public ExecutionBlockerTests()
     {
@@ -20,7 +21,7 @@ public class ExecutionBlockerTests : IDisposable
         _db = new GuardianDatabase(Path.Combine(_work, "block.db"));
         _db.Initialize();
         _blocker = new ExecutionBlocker(_db, new EventRecorder(_db, new TrustStore(_db), NullLogger<EventRecorder>.Instance),
-            NullLogger<ExecutionBlocker>.Instance);
+            _state, NullLogger<ExecutionBlocker>.Instance);
     }
 
     public void Dispose()
@@ -129,6 +130,36 @@ public class ExecutionBlockerTests : IDisposable
         _blocker.Verify();
         Assert.True(ExecutionBlocker.HasDenyExecute(exe));
         Assert.Contains(_db.GetEvents(null, 10, false), e => e.Category == EventCategory.Tamper && e.Subject.Contains("re-applied"));
+    }
+
+    [Fact]
+    public void Nothing_is_terminated_or_reapplied_while_turned_off()
+    {
+        var original = CopyOfPing();
+        _blocker.Block(original, "test");
+        var renamed = CopyOfPing("innocent-name.exe");
+        var hash = FileHasher.TryHash(renamed, long.MaxValue);
+        _state.SetProtectionOff(DateTime.UtcNow);
+
+        using var running = Start(renamed);
+        var start = new ProcessStart(new ProcessSnapshot(running.Id, "innocent-name", renamed), Environment.ProcessId, null, null);
+        Assert.False(_blocker.Enforce(start, hash));
+        Assert.False(running.HasExited);
+        running.Kill();
+
+        // A stripped deny entry is left alone while off, and put back once turned on again.
+        var info = new FileInfo(original);
+        var acl = info.GetAccessControl();
+        acl.RemoveAccessRuleAll(new System.Security.AccessControl.FileSystemAccessRule(
+            new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null),
+            System.Security.AccessControl.FileSystemRights.ExecuteFile, System.Security.AccessControl.AccessControlType.Deny));
+        info.SetAccessControl(acl);
+        _blocker.Verify();
+        Assert.False(ExecutionBlocker.HasDenyExecute(original));
+
+        _state.SetProtectionOff(null);
+        _blocker.Verify();
+        Assert.True(ExecutionBlocker.HasDenyExecute(original));
     }
 
     [Fact]

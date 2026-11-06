@@ -58,6 +58,18 @@ public sealed class GuardianEvent
 
     /// <summary>Structured analysis (JSON), e.g. a scheduled-task investigation. Only returned for single-event requests.</summary>
     public string? Analysis { get; set; }
+
+    /// <summary>
+    /// Something WinGaurdian wants to do to <see cref="FilePath"/> (see <see cref="PendingActions"/>). It is never done
+    /// automatically: the tray asks the user in a pop-up window, and acting on it (or trusting the file) acknowledges the event.
+    /// </summary>
+    public string? PendingAction { get; set; }
+}
+
+/// <summary>Values of <see cref="GuardianEvent.PendingAction"/>.</summary>
+public static class PendingActions
+{
+    public const string Quarantine = "Quarantine";
 }
 
 public sealed record FileRecord(string Path, long Size, long LastWriteTicksUtc, string? Sha256);
@@ -162,7 +174,15 @@ public sealed class RuntimeSettings
     public string? MalwareBazaarApiKey { get; set; }
     public string? VirusTotalApiKey { get; set; }
     public int VirusTotalDailyLimit { get; set; } = 450;
+    /// <summary>No longer used (replaced by <see cref="AutoQuarantineMinSeverity"/>). Kept so settings saved by older versions still load.</summary>
     public bool AutoQuarantineMalicious { get; set; }
+
+    /// <summary>
+    /// Quarantine detected files at or above this threat level straight away, without the "what should I do?" pop-up:
+    /// <see cref="Severity.High"/> = known malware, <see cref="Severity.Medium"/> = known malware and suspicious files.
+    /// Null (the default) = never: always ask.
+    /// </summary>
+    public Severity? AutoQuarantineMinSeverity { get; set; }
     public int EventRetentionDays { get; set; } = 90;
 
     /// <summary>

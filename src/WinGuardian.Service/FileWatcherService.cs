@@ -102,6 +102,12 @@ public sealed class FileWatcherService(
     {
         // Usually an internal buffer overflow during heavy disk activity (e.g. Windows Update):
         // some notifications were lost, so fall back to a full scan to catch anything missed.
+        // Not while turned off: a full scan is exactly the kind of disk load the user asked to avoid.
+        if (state.ProtectionOff)
+        {
+            logger.LogWarning(e.GetException(), "File watcher overflowed or failed; WinGaurdian is turned off, so no full scan was scheduled");
+            return;
+        }
         logger.LogWarning(e.GetException(), "File watcher overflowed or failed; scheduling a full scan");
         state.Commands.Writer.TryWrite(GuardianCommand.FullScan);
     }

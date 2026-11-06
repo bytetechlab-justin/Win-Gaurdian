@@ -83,6 +83,13 @@ internal static class ServiceCommands
             return false;
         return await SendAsync(new PipeRequest { Command = PipeProtocol.Commands.Block, Paths = [.. paths], Note = note, Ids = eventIds }, owner);
     }
+    /// <summary>
+    /// Turns WinGaurdian off (monitoring only: no automatic scans, lookups, quarantine or blocking) or back on.
+    /// Needs administrator rights, so a non-elevated tray gets a UAC prompt.
+    /// </summary>
+    public static Task<bool> SetProtectionAsync(bool turnOn, IWin32Window? owner) =>
+        SendAsync(new PipeRequest { Command = turnOn ? PipeProtocol.Commands.TurnOn : PipeProtocol.Commands.TurnOff }, owner);
+
     public static void OpenSettings()
     {
         if (IsElevated)

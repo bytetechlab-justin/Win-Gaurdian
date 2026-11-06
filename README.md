@@ -200,7 +200,18 @@ Open **Settings…** from the tray menu (UAC prompt) and enter either or both ke
   3+ engines agree, suspicious for 1–2. To protect the daily quota it is used for new processes,
   services, persistence entries and manual lookups, not for every changed file (e.g. during Windows Update).
 
-Optionally enable **auto-quarantine** of files confirmed as known malware.
+**Quarantine automatically** (Settings) picks a threat level at which detected files are quarantined without asking:
+*Never* (default), *High* (confirmed known malware) or *Medium and above* (also files flagged as suspicious). You get
+a notification, and an auto-quarantined file can be restored from the Quarantine tab. Nothing is quarantined
+automatically while WinGaurdian is turned off.
+
+Below that level, WinGaurdian never quarantines, deletes, moves or changes a file on its own. When a file on disk is
+confirmed as known malware, a window opens **centered on the screen** (on top of other windows) with everything known about the
+file: name, folder, size, dates, SHA-256, signature, real content type, where it was downloaded from and why it was
+flagged. Choose **Quarantine**, **Block Executable**, **Add to Trusted Items** (this path, or this exact content), or
+**Decide Later** (nothing changes; the alert stays in the dashboard). Several detections are shown one after another,
+and decisions still waiting when the tray starts (e.g. after sign-in) are asked then. No pop-ups while WinGaurdian is
+turned off.
 Keys are stored in the protected database, never in `appsettings.json`.
 
 ## Explorer right-click menu
@@ -352,7 +363,7 @@ dotnet run --project src\WinGuardian.Service -- --Guardian:ScanRoots:0=C:\SomeTe
 | `ProcessPollSeconds` / `ServicePollSeconds` / `PersistencePollSeconds` | 5 / 30 / 30 | |
 | `FullScanIntervalHours` | 24 | |
 
-API keys, auto-quarantine and event retention are set from the tray's **Settings** window instead.
+API keys, the auto-quarantine threat level and event retention are set from the tray's **Settings** window instead.
 
 ## Known limitations (planned work)
 

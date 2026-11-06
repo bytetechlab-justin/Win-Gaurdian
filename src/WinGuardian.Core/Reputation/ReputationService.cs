@@ -6,12 +6,17 @@ using WinGuardian.Core.Monitoring;
 
 namespace WinGuardian.Core.Reputation;
 
-public sealed record ReputationRequest(string Sha256, string? FilePath, bool UseVirusTotal, bool Manual);
+/// <param name="FromScan">An on-demand "Scan with WG": its own window already offers the actions, so no extra pop-up.</param>
+public sealed record ReputationRequest(string Sha256, string? FilePath, bool UseVirusTotal, bool Manual, bool FromScan = false);
 
 /// <summary>
 /// Looks up the hashes of new/changed executables against MalwareBazaar and VirusTotal and raises a
 /// Malware event on a hit. Lookups are queued, cached, rate-limited, and VirusTotal usage is capped
 /// per day (free tier: 500/day), so bulk file changes such as Windows Update only go to MalwareBazaar.
+/// Files at or above the threat level chosen in Settings (<see cref="RuntimeSettings.AutoQuarantineMinSeverity"/>) are
+/// quarantined automatically; for any other known malware on disk the Malware event carries a
+/// <see cref="PendingActions.Quarantine"/> recommendation and the tray asks the user what to do in a pop-up window.
+/// While WinGaurdian is turned off, only lookups a user asks for run: nothing is quarantined and no pop-up is requested.
 /// </summary>
 public sealed class ReputationService
 {
@@ -25,6 +30,7 @@ public sealed class ReputationService
     private readonly GuardianDatabase _db;
     private readonly EventRecorder _events;
     private readonly TrustStore _trust;
+    private readonly GuardianState _state;
     private readonly QuarantineManager _quarantine;
     private readonly ILogger<ReputationService> _logger;
     private readonly Channel<ReputationRequest> _queue = Channel.CreateBounded<ReputationRequest>(
@@ -34,12 +40,13 @@ public sealed class ReputationService
     private readonly Dictionary<string, DateTime> _lastProviderError = [];
 
     public ReputationService(GuardianDatabase db, EventRecorder events, TrustStore trust, QuarantineManager quarantine,
-        ILogger<ReputationService> logger)
+        GuardianState state, ILogger<ReputationService> logger)
     {
+        _quarantine = quarantine;
+        _state = state;
         _db = db;
         _events = events;
         _trust = trust;
-        _quarantine = quarantine;
         _logger = logger;
         _events.Recorded += OnEventRecorded;
     }
@@ -56,7 +63,7 @@ public sealed class ReputationService
     /// <summary>Decides which recorded events deserve a lookup.</summary>
     private void OnEventRecorded(GuardianEvent e)
     {
-        if (e.Sha256 is null || e.Change is not (ChangeKind.Added or ChangeKind.Modified)) return;
+        if (_state.ProtectionOff || e.Sha256 is null || e.Change is not (ChangeKind.Added or ChangeKind.Modified)) return;
         switch (e.Category)
         {
             case EventCategory.File when e.FilePath is not null && SeverityRules.IsExecutable(e.FilePath):
@@ -120,15 +127,15 @@ public sealed class ReputationService
                 result.VirusTotalQuotaReached = true;
         }
 
-        // Detections become events (and are auto-quarantined if enabled); clean results need no event.
+        // Detections become events; clean results need no event.
         if (result.Reputation.Any(r => r.Verdict is ReputationVerdict.Malicious or ReputationVerdict.Suspicious))
-            lock (_reportLock) Report(new ReputationRequest(sha256, path, UseVirusTotal: true, Manual: false), result.Reputation, settings);
+            lock (_reportLock) Report(new ReputationRequest(sha256, path, UseVirusTotal: true, Manual: false, FromScan: true), result.Reputation, settings);
         return result;
     }
 
     private async Task ProcessAsync(ReputationRequest request, CancellationToken ct)
     {
-        if (!request.Manual && _trust.IsTrustedFile(request.FilePath, request.Sha256)) return;
+        if (!request.Manual && (_state.ProtectionOff || _trust.IsTrustedFile(request.FilePath, request.Sha256))) return;
 
         var settings = _db.GetRuntimeSettings();
         var results = new List<ReputationResult>();
@@ -215,19 +222,27 @@ public sealed class ReputationService
             var malicious = worst == ReputationVerdict.Malicious;
             var label = results.FirstOrDefault(r => r.Verdict == worst)?.Label;
 
-            // The path can come from an unprivileged caller (manual lookups and scans send a hash and a path), so
-            // only quarantine a file whose current content really is the malware: never "this hash, that file".
-            if (malicious && settings.AutoQuarantineMalicious && request.FilePath is not null && File.Exists(request.FilePath) &&
+            // Files at or above the auto-quarantine threat level chosen in Settings are quarantined now. For other known
+            // malware the event recommends quarantine and the tray asks the user in a pop-up; nothing else touches the file.
+            // The path can come from an unprivileged caller (manual lookups and scans send a hash and a path), so only
+            // act on (or recommend acting on) a file whose current content really is the malware: never "this hash, that file".
+            var level = malicious ? Severity.High : Severity.Medium;
+            var autoQuarantine = settings.AutoQuarantineMinSeverity is { } threshold && level >= threshold;
+            string? pendingAction = null;
+            if ((malicious || autoQuarantine) && request.FilePath is not null && File.Exists(request.FilePath) &&
                 string.Equals(FileHasher.TryHash(request.FilePath, long.MaxValue), request.Sha256, StringComparison.OrdinalIgnoreCase))
             {
-                try
+                if (_state.ProtectionOff)
+                    summary += "\nWinGaurdian is turned off, so it is not acting on or asking about this file now. Nothing has been changed; review it from the dashboard.";
+                else if (request.FromScan)
                 {
-                    var item = _quarantine.Quarantine(request.FilePath, $"Automatic: known malware ({label})");
-                    summary += $"\nAutomatically quarantined (id {item.Id}){(item.PendingReboot ? "; the original will be deleted at the next reboot" : "")}.";
+                    // "Scan with WG": its own window shows the verdict and offers Quarantine.
                 }
-                catch (Exception ex)
+                else if (!(autoQuarantine && TryAutoQuarantine(request.FilePath, label, level, ref summary)))
                 {
-                    summary += $"\nAutomatic quarantine failed: {ex.Message}";
+                    // Not covered by the auto-quarantine setting (or it failed): ask the user.
+                    pendingAction = PendingActions.Quarantine;
+                    summary += "\nWinGaurdian recommends quarantining this file. Nothing has been changed: you are asked what to do.";
                 }
             }
 
@@ -240,6 +255,7 @@ public sealed class ReputationService
                 Details = $"SHA256 {request.Sha256}\n{summary}",
                 FilePath = request.FilePath,
                 Sha256 = request.Sha256,
+                PendingAction = pendingAction,
             });
         }
         else if (request.Manual)
@@ -262,6 +278,26 @@ public sealed class ReputationService
                 Subject = $"{failure.Provider} lookups are failing",
                 Details = $"{failure.Detail}. Check the API key in Settings.",
             });
+        }
+    }
+
+    /// <summary>Quarantines a detected file because of the auto-quarantine setting. Returns false (so the user is asked) if that fails.</summary>
+    private bool TryAutoQuarantine(string path, string? label, Severity level, ref string summary)
+    {
+        try
+        {
+            var item = _quarantine.Quarantine(path,
+                $"Automatic ({(level >= Severity.High ? "known malware" : "suspicious file")}{(label is null ? "" : $": {label}")})");
+            summary += $"\nAutomatically quarantined because of the auto-quarantine setting (id {item.Id})" +
+                       (item.PendingReboot ? "; the original will be deleted at the next reboot" : "") +
+                       ". Restore it from the Quarantine tab if this was a mistake.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Automatic quarantine of {Path} failed", path);
+            summary += $"\nAutomatic quarantine failed ({ex.Message}).";
+            return false;
         }
     }
 
